@@ -1,0 +1,89 @@
+@import url('https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800;900&display=swap');
+
+:root {
+  /* Палітра з дизайну Spin.html */
+  --bg: #201e1d;
+  --surface: #2a2726;
+  --surface-2: #35312f;
+  --ink: #f3f2f2;
+  --ink-dim: #bab6b6;
+  --ink-muted: #9b9797;
+  --ink-faint: #7d7979;
+  --line: rgba(243, 242, 242, 0.35);
+  --line-soft: #444141;
+  --accent: #ffd400;
+  --danger: #ec3013;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html, body, #app {
+  height: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: 'Archivo', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+button { font-family: inherit; }
+input, textarea { font-family: inherit; }
+
+h1, h2, h3, h4 { font-weight: 800; letter-spacing: -0.01em; }
+
+a { color: inherit; }
+
+.eyebrow {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+/* Кнопки */
+.btn {
+  padding: 11px 18px;
+  border: 2px solid var(--ink);
+  background: transparent;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+  border-radius: 0;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+.btn:hover:not(:disabled) { background: var(--accent); border-color: var(--accent); color: var(--bg); }
+.btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.btn-primary {
+  border-color: var(--accent);
+  background: linear-gradient(#ffe15c, #ffd400 55%, #d9b100);
+  color: #1a1600;
+}
+.btn-primary:hover:not(:disabled) { filter: brightness(1.05); }
+
+.btn-ghost { border-color: var(--line-soft); color: var(--ink-muted); }
+.btn-ghost:hover:not(:disabled) { border-color: var(--ink); color: var(--ink); background: transparent; }
+
+.btn-sm { padding: 8px 12px; font-size: 12px; }
+
+/* Поля вводу */
+.field {
+  width: 100%;
+  padding: 12px 14px;
+  font-size: 15px;
+  border: 2px solid var(--line-soft);
+  background: var(--bg);
+  color: var(--ink);
+  border-radius: 0;
+  outline: none;
+  transition: border-color 0.12s;
+}
+.field:focus { border-color: var(--accent); }
+
+.divider { height: 2px; background: var(--line); border: none; }

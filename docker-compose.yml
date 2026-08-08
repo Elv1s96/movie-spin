@@ -1,0 +1,21 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: spin_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: spin
+      POSTGRES_PASSWORD: spin
+      POSTGRES_DB: spin
+    ports:
+      - "5432:5432"
+    volumes:
+      - spin_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U spin -d spin"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  spin_pgdata:
