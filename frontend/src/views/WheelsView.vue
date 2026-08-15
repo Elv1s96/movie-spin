@@ -2,10 +2,9 @@
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { http, apiError } from '../api/http'
-import { useAuthStore } from '../stores/auth'
+import AppHeader from '../components/AppHeader.vue'
 import type { WheelSummary } from '../types'
 
-const auth = useAuthStore()
 const router = useRouter()
 
 const wheels = ref<WheelSummary[]>([])
@@ -47,27 +46,12 @@ async function remove(id: string) {
   }
 }
 
-function logout() {
-  auth.logout()
-  router.push({ name: 'login' })
-}
-
 onMounted(load)
 </script>
 
 <template>
   <div class="page">
-    <header class="topbar">
-      <div class="brand">Колесо<span>.</span></div>
-      <nav class="nav">
-        <router-link :to="{ name: 'wheels' }" class="active">Колеса</router-link>
-        <router-link :to="{ name: 'movies' }">Мої фільми</router-link>
-      </nav>
-      <div class="right">
-        <span class="who">{{ auth.user?.email }}</span>
-        <button class="btn btn-ghost btn-sm" @click="logout">Вийти</button>
-      </div>
-    </header>
+    <AppHeader />
 
     <main class="wrap">
       <div class="head">
@@ -100,17 +84,6 @@ onMounted(load)
 
 <style scoped>
 .page { min-height: 100vh; }
-.topbar {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 18px 32px; border-bottom: 2px solid var(--line); background: var(--surface);
-}
-.brand { font-size: 18px; font-weight: 900; text-transform: uppercase; }
-.brand span { color: var(--accent); }
-.nav { display: flex; gap: 18px; margin-left: 28px; }
-.nav a { text-decoration: none; color: var(--ink-muted); font-size: 14px; font-weight: 700; padding-bottom: 2px; border-bottom: 2px solid transparent; }
-.nav a.active, .nav a.router-link-exact-active { color: var(--ink); border-color: var(--accent); }
-.right { margin-left: auto; display: flex; align-items: center; gap: 14px; }
-.who { font-size: 13px; color: var(--ink-muted); }
 .wrap { max-width: 900px; margin: 0 auto; padding: 40px 32px; display: flex; flex-direction: column; gap: 24px; }
 .head h1 { font-size: 28px; margin-top: 6px; }
 .creator { display: flex; gap: 12px; }

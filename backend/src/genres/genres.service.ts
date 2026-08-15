@@ -16,13 +16,15 @@ export class GenresService {
     });
   }
 
-  // Створюємо жанр у каталозі. Якщо такий уже є (унікальність userId+name),
-  // просто повертаємо наявний — форма може «додати» той самий жанр повторно.
+  // Створюємо жанр у каталозі. Назву зводимо до нижнього регістру, а наявність
+  // перевіряємо без урахування регістру — щоб «Комедія» і «комедія» лишались
+  // одним записом (у т.ч. поряд зі старими записами з великої літери).
+  // Якщо такий жанр уже є — просто повертаємо наявний, нового не створюємо.
   async create(userId: string, rawName: string) {
-    const name = rawName.trim();
+    const name = rawName.trim().toLowerCase();
     if (!name) throw new ForbiddenException('Порожня назва жанру');
-    const existing = await this.prisma.genre.findUnique({
-      where: { userId_name: { userId, name } },
+    const existing = await this.prisma.genre.findFirst({
+      where: { userId, name: { equals: name, mode: 'insensitive' } },
     });
     if (existing) return existing;
     return this.prisma.genre.create({ data: { userId, name } });

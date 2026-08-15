@@ -1,12 +1,8 @@
 <script setup lang="ts">
-import { ref, reactive, onMounted, computed } from 'vue'
-import { useRouter } from 'vue-router'
+import { ref, reactive, onMounted, onUnmounted, computed, watch } from 'vue'
 import { http, apiError } from '../api/http'
-import { useAuthStore } from '../stores/auth'
+import AppHeader from '../components/AppHeader.vue'
 import type { Movie, Genre, WheelSummary } from '../types'
-
-const auth = useAuthStore()
-const router = useRouter()
 
 const movies = ref<Movie[]>([])
 const genres = ref<Genre[]>([])
@@ -20,13 +16,11 @@ const addedWheelIds = ref<string[]>([])
 const addingWheelId = ref<string | null>(null)
 
 // Ввід нового жанру прямо у формі фільму (додає в каталог і одразу обирає).
+// Перейменування/видалення жанрів живе на окремій сторінці «Жанри».
 const newGenre = ref('')
-// Панель керування каталогом жанрів.
-const managerOpen = ref(false)
-const genreDraft = ref('') // ввід у панелі керування
-const renamingId = ref<string | null>(null)
-const renameDraft = ref('')
 
+// Форма фільму живе в модалці — і для створення, і для редагування.
+const editorOpen = ref(false)
 const editingId = ref<string | null>(null)
 const uploading = ref(false)
 const saving = ref(false)
@@ -294,49 +288,6 @@ async function addNewGenre() {
   }
 }
 
-// --- Панель керування каталогом ---
-async function createGenre() {
-  const name = genreDraft.value.trim()
-  if (!name) return
-  try {
-    const { data } = await http.post<Genre>('/genres', { name })
-    if (!genres.value.some((g) => g.id === data.id)) genres.value.push(data)
-    genreDraft.value = ''
-  } catch (e) {
-    error.value = apiError(e)
-  }
-}
-
-function startRename(g: Genre) {
-  renamingId.value = g.id
-  renameDraft.value = g.name
-}
-
-async function saveRename(g: Genre) {
-  const name = renameDraft.value.trim()
-  renamingId.value = null
-  if (!name || name === g.name) return
-  try {
-    await http.patch<Genre>(`/genres/${g.id}`, { name })
-    // Перейменування каскадить у фільми — перечитуємо каталог і бібліотеку.
-    await Promise.all([loadGenres(), load()])
-  } catch (e) {
-    error.value = apiError(e)
-  }
-}
-
-async function deleteGenre(g: Genre) {
-  if (!confirm(`Видалити жанр «${g.name}» з каталогу? Він зникне і з усіх фільмів.`)) return
-  try {
-    await http.delete(`/genres/${g.id}`)
-    genres.value = genres.value.filter((x) => x.id !== g.id)
-    form.genres = form.genres.filter((n) => n !== g.name)
-    await load()
-  } catch (e) {
-    error.value = apiError(e)
-  }
-}
-
 async function onUpload(e: Event) {
   const input = e.target as HTMLInputElement
   const file = input.files?.[0]
@@ -382,12 +333,24 @@ async function submit() {
       const { data } = await http.post<Movie>('/movies', payload())
       movies.value.unshift(data)
     }
-    resetForm()
+    closeEditor()
   } catch (e) {
     error.value = apiError(e)
   } finally {
     saving.value = false
   }
+}
+
+function openCreate() {
+  resetForm()
+  error.value = ''
+  editorOpen.value = true
+}
+
+function closeEditor() {
+  editorOpen.value = false
+  error.value = ''
+  resetForm()
 }
 
 function startEdit(m: Movie) {
@@ -400,7 +363,8 @@ function startEdit(m: Movie) {
   form.genres = [...m.genres]
   form.watched = m.watched
   form.watchedAt = m.watchedAt ? m.watchedAt.slice(0, 10) : ''
-  window.scrollTo({ top: 0, behavior: 'smooth' })
+  error.value = ''
+  editorOpen.value = true
 }
 
 // Позначка «переглянуто» з картки. Око завжди відкриває модальне вікно з
@@ -446,162 +410,44 @@ async function remove(id: string) {
   try {
     await http.delete(`/movies/${id}`)
     movies.value = movies.value.filter((m) => m.id !== id)
-    if (editingId.value === id) resetForm()
+    if (editingId.value === id) closeEditor()
   } catch (e) {
     error.value = apiError(e)
   }
 }
 
-function logout() {
-  auth.logout()
-  router.push({ name: 'login' })
+// Esc закриває модалку редагування; поки вона відкрита — сторінка під нею не скролиться.
+function onKeydown(e: KeyboardEvent) {
+  if (e.key === 'Escape' && editorOpen.value) closeEditor()
 }
+
+watch(editorOpen, (open) => {
+  document.body.style.overflow = open ? 'hidden' : ''
+})
 
 onMounted(() => {
   load()
   loadGenres()
   loadWheels()
+  window.addEventListener('keydown', onKeydown)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('keydown', onKeydown)
+  document.body.style.overflow = ''
 })
 </script>
 
 <template>
   <div class="page">
-    <header class="topbar">
-      <div class="brand">Колесо<span>.</span></div>
-      <nav class="nav">
-        <router-link :to="{ name: 'wheels' }">Колеса</router-link>
-        <router-link :to="{ name: 'movies' }" class="active">Мої фільми</router-link>
-      </nav>
-      <div class="right">
-        <span class="who">{{ auth.user?.email }}</span>
-        <button class="btn btn-ghost btn-sm" @click="logout">Вийти</button>
-      </div>
-    </header>
+    <AppHeader />
 
     <main class="wrap">
-      <!-- Форма додавання / редагування -->
-      <section class="editor">
-        <div class="eyebrow">{{ isEditing ? 'Редагування фільму' : 'Новий фільм' }}</div>
-        <div class="editor-grid">
-          <!-- Постер -->
-          <div class="poster-col">
-            <div class="poster-preview">
-              <img v-if="form.posterUrl" :src="form.posterUrl" alt="" />
-              <span v-else class="poster-ph">Постер</span>
-            </div>
-            <input class="field" v-model="form.posterUrl" placeholder="Лінк на картинку" />
-            <label class="btn btn-ghost btn-sm upload">
-              {{ uploading ? 'Завантаження…' : 'Завантажити файл' }}
-              <input type="file" accept="image/*" @change="onUpload" hidden />
-            </label>
-          </div>
-
-          <!-- Поля -->
-          <div class="fields-col">
-            <input class="field" v-model="form.title" placeholder="Назва фільму *" />
-            <textarea
-              class="field area"
-              v-model="form.description"
-              placeholder="Короткий опис"
-              rows="3"
-            ></textarea>
-            <div class="row">
-              <label class="mini">
-                <span>Бали IMDb</span>
-                <input class="field" v-model.number="form.imdbRating" type="number" min="0" max="10" step="0.1" placeholder="0–10" />
-              </label>
-              <label class="mini">
-                <span>Рік</span>
-                <input class="field" v-model.number="form.year" type="number" min="1900" max="2100" placeholder="напр. 1999" />
-              </label>
-            </div>
-            <div class="mini">
-              <span>Жанри</span>
-              <div class="chips">
-                <button
-                  v-for="g in pickerGenres"
-                  :key="g"
-                  type="button"
-                  class="chip"
-                  :class="{ on: form.genres.includes(g) }"
-                  @click="toggleGenre(g)"
-                >{{ g }}</button>
-                <span v-if="!pickerGenres.length" class="chips-empty">Каталог порожній — додай перший жанр нижче.</span>
-              </div>
-              <div class="chip-add">
-                <input
-                  class="field"
-                  v-model="newGenre"
-                  placeholder="Новий жанр + Enter"
-                  @keydown.enter.prevent="addNewGenre"
-                />
-                <button type="button" class="btn btn-ghost btn-sm" @click="addNewGenre">Додати</button>
-                <button type="button" class="btn btn-ghost btn-sm" @click="managerOpen = !managerOpen">
-                  {{ managerOpen ? 'Сховати каталог' : 'Керувати каталогом' }}
-                </button>
-              </div>
-
-              <div v-if="managerOpen" class="genre-manager">
-                <div class="gm-head">Каталог жанрів</div>
-                <div v-if="!genres.length" class="chips-empty">Ще немає жанрів у каталозі.</div>
-                <div v-for="g in genres" :key="g.id" class="gm-row">
-                  <template v-if="renamingId === g.id">
-                    <input
-                      class="field"
-                      v-model="renameDraft"
-                      @keydown.enter.prevent="saveRename(g)"
-                      @keydown.esc="renamingId = null"
-                    />
-                    <button type="button" class="btn btn-ghost btn-sm" @click="saveRename(g)">Ок</button>
-                    <button type="button" class="btn btn-ghost btn-sm" @click="renamingId = null">×</button>
-                  </template>
-                  <template v-else>
-                    <span class="gm-name">{{ g.name }}</span>
-                    <button type="button" class="link-btn" @click="startRename(g)">перейменувати</button>
-                    <button type="button" class="link-btn del" @click="deleteGenre(g)">видалити</button>
-                  </template>
-                </div>
-                <div class="gm-row">
-                  <input
-                    class="field"
-                    v-model="genreDraft"
-                    placeholder="Додати жанр у каталог"
-                    @keydown.enter.prevent="createGenre"
-                  />
-                  <button type="button" class="btn btn-ghost btn-sm" @click="createGenre">Додати</button>
-                </div>
-              </div>
-            </div>
-
-            <!-- Перегляд -->
-            <div class="watch-row">
-              <label class="check">
-                <input type="checkbox" v-model="form.watched" />
-                <span>Переглянуто</span>
-              </label>
-              <label v-if="form.watched" class="mini date">
-                <span>Дата перегляду</span>
-                <input class="field" type="date" v-model="form.watchedAt" />
-              </label>
-            </div>
-
-            <div class="actions">
-              <button class="btn btn-primary" :disabled="saving || !form.title.trim()" @click="submit">
-                {{ saving ? '…' : isEditing ? 'Зберегти' : 'Додати в бібліотеку' }}
-              </button>
-              <button v-if="isEditing" class="btn btn-ghost" @click="resetForm">Скасувати</button>
-            </div>
-          </div>
-        </div>
-        <p v-if="error" class="err">{{ error }}</p>
-      </section>
-
-      <hr class="divider" />
-
       <!-- Бібліотека -->
       <div class="lib-head">
         <div class="eyebrow">Бібліотека</div>
         <div class="lib-tools">
+          <button class="btn btn-primary btn-sm" @click="openCreate">+ Додати фільм</button>
           <a class="link-btn" href="/movies.example.json" download>Приклад JSON</a>
           <button class="btn btn-ghost btn-sm" :disabled="!movies.length" @click="exportJson">
             ↧ Експорт
@@ -616,6 +462,7 @@ onMounted(() => {
         </div>
       </div>
       <p v-if="importMsg" class="import-msg">{{ importMsg }}</p>
+      <p v-if="error && !editorOpen" class="err">{{ error }}</p>
 
       <div v-if="movies.length" class="filter-bar">
         <input
@@ -690,10 +537,106 @@ onMounted(() => {
 
     </main>
 
+    <!-- Модальне вікно додавання / редагування фільму -->
+    <Teleport to="body">
+      <div v-if="editorOpen" class="overlay" @click.self="closeEditor">
+        <div class="modal modal-lg">
+          <div class="modal-head">
+            <div class="eyebrow">{{ isEditing ? 'Редагування фільму' : 'Новий фільм' }}</div>
+            <button class="close" title="Закрити" @click="closeEditor">✕</button>
+          </div>
+
+          <div class="modal-body">
+            <div class="editor-grid">
+              <!-- Постер -->
+              <div class="poster-col">
+                <div class="poster-preview">
+                  <img v-if="form.posterUrl" :src="form.posterUrl" alt="" />
+                  <span v-else class="poster-ph">Постер</span>
+                </div>
+                <input class="field" v-model="form.posterUrl" placeholder="Лінк на картинку" />
+                <label class="btn btn-ghost btn-sm upload">
+                  {{ uploading ? 'Завантаження…' : 'Завантажити файл' }}
+                  <input type="file" accept="image/*" @change="onUpload" hidden />
+                </label>
+              </div>
+
+              <!-- Поля -->
+              <div class="fields-col">
+                <input class="field" v-model="form.title" placeholder="Назва фільму *" />
+                <textarea
+                  class="field area"
+                  v-model="form.description"
+                  placeholder="Короткий опис"
+                  rows="3"
+                ></textarea>
+                <div class="row">
+                  <label class="mini">
+                    <span>Бали IMDb</span>
+                    <input class="field" v-model.number="form.imdbRating" type="number" min="0" max="10" step="0.1" placeholder="0–10" />
+                  </label>
+                  <label class="mini">
+                    <span>Рік</span>
+                    <input class="field" v-model.number="form.year" type="number" min="1900" max="2100" placeholder="напр. 1999" />
+                  </label>
+                </div>
+                <div class="mini">
+                  <span>Жанри</span>
+                  <div class="chips">
+                    <button
+                      v-for="g in pickerGenres"
+                      :key="g"
+                      type="button"
+                      class="chip"
+                      :class="{ on: form.genres.includes(g) }"
+                      @click="toggleGenre(g)"
+                    >{{ g }}</button>
+                    <span v-if="!pickerGenres.length" class="chips-empty">Каталог порожній — додай перший жанр нижче.</span>
+                  </div>
+                  <div class="chip-add">
+                    <input
+                      class="field"
+                      v-model="newGenre"
+                      placeholder="Новий жанр + Enter"
+                      @keydown.enter.prevent="addNewGenre"
+                    />
+                    <button type="button" class="btn btn-ghost btn-sm" @click="addNewGenre">Додати</button>
+                    <router-link :to="{ name: 'genres' }" class="btn btn-ghost btn-sm manage">
+                      Керувати каталогом
+                    </router-link>
+                  </div>
+                </div>
+
+                <!-- Перегляд -->
+                <div class="watch-row">
+                  <label class="check">
+                    <input type="checkbox" v-model="form.watched" />
+                    <span>Переглянуто</span>
+                  </label>
+                  <label v-if="form.watched" class="mini date">
+                    <span>Дата перегляду</span>
+                    <input class="field" type="date" v-model="form.watchedAt" />
+                  </label>
+                </div>
+              </div>
+            </div>
+            <p v-if="error" class="err">{{ error }}</p>
+          </div>
+
+          <div class="modal-foot">
+            <button class="btn btn-primary" :disabled="saving || !form.title.trim()" @click="submit">
+              {{ saving ? '…' : isEditing ? 'Зберегти' : 'Додати в бібліотеку' }}
+            </button>
+            <button class="btn btn-ghost" @click="closeEditor">Скасувати</button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
     <!-- Модальне вікно позначки перегляду -->
     <Teleport to="body">
-      <div v-if="watchTarget" class="watch-overlay" @click.self="closeWatch">
-        <div class="watch-modal">
+      <div v-if="watchTarget" class="overlay" @click.self="closeWatch">
+        <div class="modal modal-sm">
           <div class="wm-eyebrow">Дата перегляду</div>
           <div class="wm-movie">{{ watchTarget.title }}</div>
           <input
@@ -718,8 +661,8 @@ onMounted(() => {
 
     <!-- Модальне вікно «додати в колесо» -->
     <Teleport to="body">
-      <div v-if="wheelTarget" class="watch-overlay" @click.self="closeAddToWheel">
-        <div class="watch-modal">
+      <div v-if="wheelTarget" class="overlay" @click.self="closeAddToWheel">
+        <div class="modal modal-sm">
           <div class="wm-eyebrow">Додати в колесо</div>
           <div class="wm-movie">{{ wheelTarget.title }}</div>
 
@@ -754,26 +697,9 @@ onMounted(() => {
 
 <style scoped>
 .page { min-height: 100vh; }
-.topbar {
-  display: flex; align-items: center; gap: 28px;
-  padding: 16px 32px; border-bottom: 2px solid var(--line); background: var(--surface);
-  position: sticky; top: 0; z-index: 10;
-}
-.brand { font-size: 18px; font-weight: 900; text-transform: uppercase; }
-.brand span { color: var(--accent); }
-.nav { display: flex; gap: 18px; }
-.nav a {
-  text-decoration: none; color: var(--ink-muted); font-size: 14px; font-weight: 700;
-  padding-bottom: 2px; border-bottom: 2px solid transparent;
-}
-.nav a.active, .nav a.router-link-active { color: var(--ink); border-color: var(--accent); }
-.right { margin-left: auto; display: flex; align-items: center; gap: 14px; }
-.who { font-size: 13px; color: var(--ink-muted); }
-
 .wrap { max-width: 1500px; margin: 0 auto; padding: 32px; display: flex; flex-direction: column; gap: 24px; }
 
-/* Редактор */
-.editor { background: var(--surface); border: 2px solid var(--line-soft); padding: 24px; display: flex; flex-direction: column; gap: 16px; }
+/* Редактор фільму (всередині модалки) */
 .editor-grid { display: grid; grid-template-columns: 200px 1fr; gap: 24px; }
 .poster-col { display: flex; flex-direction: column; gap: 10px; }
 .poster-preview {
@@ -792,7 +718,6 @@ onMounted(() => {
 .check { display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 14px; font-weight: 600; padding-bottom: 9px; }
 .check input { width: 18px; height: 18px; accent-color: var(--accent); cursor: pointer; }
 .mini.date { flex: 0 0 auto; }
-.actions { display: flex; gap: 12px; margin-top: 4px; }
 
 .lib-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
 .lib-tools { display: flex; align-items: center; gap: 14px; }
@@ -861,20 +786,13 @@ onMounted(() => {
 .chip-add { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .chip-add .field { flex: 1; min-width: 140px; }
 
-.genre-manager {
-  border: 1.5px solid var(--line-soft); background: var(--bg);
-  padding: 12px; display: flex; flex-direction: column; gap: 8px;
-}
-.gm-head { font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--ink-faint); }
-.gm-row { display: flex; gap: 8px; align-items: center; }
-.gm-row .field { flex: 1; }
-.gm-name { flex: 1; font-size: 14px; font-weight: 600; }
+/* Перехід на сторінку керування каталогом жанрів. */
+.manage { text-decoration: none; display: inline-flex; align-items: center; white-space: nowrap; }
 .link-btn {
   background: none; border: none; padding: 0; cursor: pointer;
   font-size: 12px; color: var(--ink-muted); text-decoration: underline;
 }
 .link-btn:hover { color: var(--ink); }
-.link-btn.del:hover { color: var(--danger); }
 .seen-line { font-size: 12px; font-weight: 700; letter-spacing: 0.02em; color: var(--ink-faint); }
 .seen-line.on { color: var(--accent); }
 
@@ -889,18 +807,37 @@ onMounted(() => {
 .icon-btn.watch.on { border-color: var(--accent); color: var(--accent); }
 .icon-btn.del:hover { border-color: var(--danger); color: var(--danger); }
 
-/* Модальне вікно позначки перегляду (клік по оку) */
-.watch-overlay {
+/* Спільна основа для всіх модалок сторінки */
+.overlay {
   position: fixed; inset: 0; z-index: 100;
   background: rgba(0, 0, 0, 0.6);
   display: flex; align-items: center; justify-content: center; padding: 20px;
 }
-.watch-modal {
-  width: min(380px, 92vw);
+.modal {
   background: var(--surface); border: 2px solid var(--line-soft);
-  padding: 24px; display: flex; flex-direction: column; gap: 14px;
   box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6);
+  display: flex; flex-direction: column; max-height: 90vh;
 }
+.modal-sm { width: min(380px, 92vw); padding: 24px; gap: 14px; }
+.modal-lg { width: min(760px, 94vw); }
+
+/* Модалка редактора фільму: шапка й підвал прибиті, тіло скролиться */
+.modal-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 18px 24px; border-bottom: 2px solid var(--line-soft);
+}
+.modal-body { padding: 24px; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; }
+.modal-foot {
+  display: flex; gap: 12px; padding: 16px 24px;
+  border-top: 2px solid var(--line-soft); background: var(--surface);
+}
+.close {
+  width: 32px; height: 32px; flex: 0 0 32px;
+  display: flex; align-items: center; justify-content: center;
+  background: transparent; border: none; color: var(--ink-muted);
+  font-size: 16px; cursor: pointer; transition: color 0.12s;
+}
+.close:hover { color: var(--ink); }
 .wm-eyebrow { font-size: 11px; text-transform: uppercase; letter-spacing: 0.12em; color: var(--ink-faint); }
 .wm-movie { font-size: 18px; font-weight: 800; line-height: 1.25; }
 .wm-date { font-size: 18px; padding: 12px 14px; width: 100%; }
