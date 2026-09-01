@@ -31,6 +31,26 @@ export class MoviesController {
     return this.movies.findAll(user.id);
   }
 
+  // ── Публічне посилання на бібліотеку ──────────────────────────────────────
+  // УВАГА: ці три маршрути мають лишатися ВИЩЕ за generic-маршрути з :id,
+  // інакше Nest зматчить DELETE /movies/share як видалення фільму з id="share".
+
+  @Get('share')
+  getShare(@CurrentUser() user: AuthUser) {
+    return this.movies.getShare(user.id);
+  }
+
+  // Повторний виклик перевипускає токен — старе посилання перестає працювати.
+  @Post('share')
+  createShare(@CurrentUser() user: AuthUser) {
+    return this.movies.createShare(user.id);
+  }
+
+  @Delete('share')
+  revokeShare(@CurrentUser() user: AuthUser) {
+    return this.movies.revokeShare(user.id);
+  }
+
   @Post()
   create(@CurrentUser() user: AuthUser, @Body() dto: CreateMovieDto) {
     return this.movies.create(user.id, dto);

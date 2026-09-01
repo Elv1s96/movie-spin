@@ -22,10 +22,18 @@ export class UpdateWheelDto {
   name!: string;
 }
 
+// Додати позицію: або фільм з бібліотеки (movieId), або довільне слово (title).
 export class AddItemDto {
+  @IsOptional()
   @IsString()
   @MinLength(1)
-  movieId!: string;
+  movieId?: string;
+
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  @MaxLength(120)
+  title?: string;
 
   @IsOptional()
   @IsNumber()

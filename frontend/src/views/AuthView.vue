@@ -34,7 +34,7 @@ async function submit() {
 <template>
   <div class="auth">
     <div class="card">
-      <div class="brand">Колесо<span>.</span></div>
+      <div class="brand">Кінолесо<span>.</span></div>
       <p class="sub">Зважений випадковий вибір фільмів</p>
 
       <div class="tabs">
@@ -57,33 +57,40 @@ async function submit() {
 <style scoped>
 .auth {
   min-height: 100vh;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: radial-gradient(120% 90% at 50% 30%, #35312f 0%, #201e1d 62%, #171514 100%);
+  display: flex; align-items: center; justify-content: center;
   padding: 24px;
 }
 .card {
-  width: 100%;
-  max-width: 380px;
-  background: var(--surface);
-  border: 2px solid var(--line);
-  padding: 36px 32px;
-  display: flex;
-  flex-direction: column;
-  gap: 18px;
+  width: 100%; max-width: 400px;
+  background: linear-gradient(180deg, rgba(26, 19, 56, 0.92) 0%, rgba(13, 8, 28, 0.95) 100%);
+  border: 1.5px solid var(--line); border-radius: 18px;
+  box-shadow: 0 0 44px -12px var(--accent-3), 0 0 90px -40px var(--accent-2), 0 30px 70px rgba(0, 0, 0, 0.6);
+  padding: 38px 32px;
+  display: flex; flex-direction: column; gap: 18px;
 }
-.brand { font-size: 30px; font-weight: 900; text-transform: uppercase; }
-.brand span { color: var(--accent); }
-.sub { font-size: 14px; color: var(--ink-dim); margin-top: -10px; }
-.tabs { display: flex; border: 2px solid var(--line-soft); }
+.brand {
+  font-size: 30px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.16em;
+  color: var(--accent-2);
+  text-shadow: 0 0 14px rgba(34, 224, 255, 0.6), 0 0 34px rgba(34, 224, 255, 0.3);
+}
+.brand span { color: var(--accent); text-shadow: 0 0 14px rgba(255, 45, 149, 0.7); }
+.sub { font-size: 13px; color: var(--ink-muted); margin-top: -10px; letter-spacing: 0.02em; }
+.tabs {
+  display: flex; border: 1.5px solid var(--line-soft); border-radius: 999px;
+  overflow: hidden; background: rgba(10, 5, 24, 0.5);
+}
 .tabs button {
   flex: 1; padding: 11px; border: none; background: transparent;
-  color: var(--ink-muted); font-weight: 800; text-transform: uppercase;
-  font-size: 13px; letter-spacing: 0.06em; cursor: pointer;
+  color: var(--ink-muted); font-weight: 700; text-transform: uppercase;
+  font-size: 12px; letter-spacing: 0.12em; cursor: pointer;
+  transition: background 0.18s, color 0.18s, box-shadow 0.18s;
 }
-.tabs button.on { background: var(--ink); color: var(--bg); }
+.tabs button:hover:not(.on) { color: var(--accent-2); }
+.tabs button.on {
+  background: linear-gradient(100deg, var(--accent) 0%, #c026d3 100%);
+  color: #fff; box-shadow: 0 0 20px rgba(255, 45, 149, 0.45);
+}
 form { display: flex; flex-direction: column; gap: 12px; }
 .submit { margin-top: 4px; }
-.err { color: #ff8a80; font-size: 13px; }
+.err { color: var(--danger); font-size: 13px; }
 </style>

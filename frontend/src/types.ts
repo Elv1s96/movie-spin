@@ -20,10 +20,23 @@ export interface Movie {
   posterUrl: string | null
   year: number | null
   genres: string[]
+  /** Своє слово, додане на сторінці колеса (у бібліотеці не показується). */
+  isCustom: boolean
   watched: boolean
   watchedAt: string | null
   createdAt: string
   updatedAt: string
+}
+
+/**
+ * Фільм, відданий по публічному посиланню: без userId/isCustom — гостю вони
+ * не потрібні, тож бекенд їх не віддає.
+ */
+export type PublicMovie = Omit<Movie, 'userId' | 'isCustom' | 'updatedAt'>
+
+/** Стан публічного посилання на бібліотеку: token === null — посилання немає. */
+export interface ShareInfo {
+  token: string | null
 }
 
 /** Фільм у колесі + його вага. */
@@ -42,6 +55,8 @@ export interface WheelSummary {
   createdAt: string
   updatedAt: string
   _count: { items: number }
+  /** Чи вже є на цьому колесі фільм, переданий у GET /wheels?movieId=… */
+  hasMovie?: boolean
 }
 
 export interface Wheel {

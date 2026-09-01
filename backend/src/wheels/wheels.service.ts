@@ -5,7 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { CreateWheelDto, UpdateWheelDto } from './dto/wheel.dto';
+import { AddItemDto, CreateWheelDto, UpdateWheelDto } from './dto/wheel.dto';
 
 // Стабільний порядок секторів — фронт рендерить у цьому ж порядку, тож індекс
 // переможця з бекенду однозначно вказує на сектор.
@@ -29,12 +29,25 @@ export class WheelsService {
     return movie;
   }
 
-  findAll(userId: string) {
-    return this.prisma.wheel.findMany({
+  /**
+   * Список коліс користувача. Якщо передано movieId — до кожного колеса
+   * додається прапорець hasMovie: чи вже є цей фільм на колесі (щоб у модалці
+   * «додати в колесо» одразу було видно, куди фільм уже доданий).
+   */
+  async findAll(userId: string, movieId?: string) {
+    const wheels = await this.prisma.wheel.findMany({
       where: { userId },
       orderBy: { updatedAt: 'desc' },
-      include: { _count: { select: { items: true } } },
+      include: {
+        _count: { select: { items: true } },
+        // Порожній movieId не збігається з жодним записом — items буде [].
+        items: { where: { movieId: movieId ?? '' }, select: { id: true } },
+      },
     });
+    return wheels.map(({ items, ...wheel }) => ({
+      ...wheel,
+      hasMovie: items.length > 0,
+    }));
   }
 
   async findOne(wheelId: string, userId: string) {
@@ -60,18 +73,47 @@ export class WheelsService {
   async remove(wheelId: string, userId: string) {
     await this.assertWheelOwned(wheelId, userId);
     await this.prisma.wheel.delete({ where: { id: wheelId } });
+    // Свої слова, що лишились без колеса й без історії, прибираємо.
+    await this.prisma.movie.deleteMany({
+      where: { userId, isCustom: true, items: { none: {} }, wins: { none: {} } },
+    });
     return { ok: true };
   }
 
   // ── Позиції колеса (фільм з бібліотеки + вага) ──
 
-  /** Додає фільм з бібліотеки в колесо (ідемпотентно). */
-  async addItem(wheelId: string, userId: string, movieId: string, weight?: number) {
+  /**
+   * Додає позицію в колесо (ідемпотентно): або фільм з бібліотеки (movieId),
+   * або довільне слово (title) — під нього створюється прихований запис
+   * Movie з isCustom, який у бібліотеці «Мої фільми» не показується.
+   */
+  async addItem(wheelId: string, userId: string, dto: AddItemDto) {
     await this.assertWheelOwned(wheelId, userId);
-    await this.assertMovieOwned(movieId, userId);
+
+    const title = dto.title?.trim();
+    let movieId = dto.movieId;
+
+    if (movieId) {
+      await this.assertMovieOwned(movieId, userId);
+    } else if (title) {
+      // Таке саме слово вже на колесі → повертаємо наявну позицію.
+      const existing = await this.prisma.wheelItem.findFirst({
+        where: { wheelId, movie: { title, isCustom: true } },
+        include: { movie: true },
+      });
+      if (existing) return existing;
+
+      const movie = await this.prisma.movie.create({
+        data: { userId, title, isCustom: true },
+      });
+      movieId = movie.id;
+    } else {
+      throw new BadRequestException('Потрібен movieId або title');
+    }
+
     const item = await this.prisma.wheelItem.upsert({
       where: { wheelId_movieId: { wheelId, movieId } },
-      create: { wheelId, movieId, weight: weight && weight > 0 ? weight : 1 },
+      create: { wheelId, movieId, weight: dto.weight && dto.weight > 0 ? dto.weight : 1 },
       update: {},
       include: { movie: true },
     });
@@ -81,7 +123,21 @@ export class WheelsService {
 
   async removeItem(wheelId: string, itemId: string, userId: string) {
     await this.assertWheelOwned(wheelId, userId);
-    await this.prisma.wheelItem.delete({ where: { id: itemId } });
+    const item = await this.prisma.wheelItem.delete({
+      where: { id: itemId },
+      include: { movie: true },
+    });
+    // Своє слово без інших колес і без згадок в історії — прибираємо з БД,
+    // щоб приховані записи не накопичувались.
+    if (item.movie.isCustom) {
+      const [used, inHistory] = await Promise.all([
+        this.prisma.wheelItem.count({ where: { movieId: item.movieId } }),
+        this.prisma.spinHistory.count({ where: { movieId: item.movieId } }),
+      ]);
+      if (!used && !inHistory) {
+        await this.prisma.movie.delete({ where: { id: item.movieId } });
+      }
+    }
     await this.touch(wheelId);
     return { ok: true };
   }
@@ -145,7 +201,7 @@ export class WheelsService {
     const items = itemIds?.length ? all.filter((i) => active.has(i.id)) : all;
 
     if (items.length < 2) {
-      throw new BadRequestException('Потрібно щонайменше 2 фільми');
+      throw new BadRequestException('Потрібно щонайменше 2 позиції');
     }
 
     // Вага ≤ 0 → 0 (не випадає); якщо всі нульові — рівні шанси.

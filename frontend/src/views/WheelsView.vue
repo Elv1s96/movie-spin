@@ -85,24 +85,36 @@ onMounted(load)
 <style scoped>
 .page { min-height: 100vh; }
 .wrap { max-width: 900px; margin: 0 auto; padding: 40px 32px; display: flex; flex-direction: column; gap: 24px; }
-.head h1 { font-size: 28px; margin-top: 6px; }
+.head h1 {
+  font-size: 30px; margin-top: 8px; font-weight: 700;
+  color: var(--accent-2); text-shadow: 0 0 18px rgba(34, 224, 255, 0.4);
+}
 .creator { display: flex; gap: 12px; }
 .creator .field { flex: 1; }
-.err { color: #ff8a80; font-size: 14px; }
+.err { color: var(--danger); font-size: 14px; }
 .muted { color: var(--ink-faint); font-size: 15px; }
-.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 16px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 18px; }
 .tile {
-  border: 2px solid var(--line-soft); background: var(--surface); padding: 20px;
-  cursor: pointer; transition: border-color 0.12s, transform 0.12s;
-  display: flex; flex-direction: column; gap: 12px; min-height: 120px;
+  border: 1.5px solid var(--line); border-radius: 14px;
+  background: linear-gradient(180deg, rgba(24, 17, 48, 0.9) 0%, rgba(13, 8, 28, 0.94) 100%);
+  padding: 20px; cursor: pointer;
+  transition: border-color 0.18s, transform 0.18s, box-shadow 0.18s;
+  display: flex; flex-direction: column; gap: 12px; min-height: 124px;
+  box-shadow: 0 0 22px -12px var(--accent-3), 0 10px 30px rgba(0, 0, 0, 0.45);
 }
-.tile:hover { border-color: var(--accent); transform: translateY(-2px); }
+.tile:hover {
+  border-color: var(--accent); transform: translateY(-4px);
+  box-shadow: 0 0 22px -4px var(--accent), 0 16px 40px rgba(0, 0, 0, 0.5);
+}
 .tile-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
-.tile h3 { font-size: 19px; word-break: break-word; }
+.tile h3 { font-size: 18px; font-weight: 600; word-break: break-word; transition: color 0.18s; }
+.tile:hover h3 { color: var(--accent); text-shadow: 0 0 14px rgba(255, 45, 149, 0.45); }
 .del {
   border: none; background: transparent; color: var(--ink-faint);
-  font-size: 22px; line-height: 1; cursor: pointer; flex: 0 0 auto;
+  font-size: 22px; line-height: 1; cursor: pointer; flex: 0 0 auto; transition: color 0.18s;
 }
 .del:hover { color: var(--danger); }
-.count { font-size: 12px; color: var(--ink-muted); text-transform: uppercase; letter-spacing: 0.1em; margin-top: auto; }
+.count { font-size: 11px; color: var(--ink-muted); text-transform: uppercase; letter-spacing: 0.14em; margin-top: auto; }
+
+@media (max-width: 640px) { .wrap { padding: 24px 16px; } }
 </style>

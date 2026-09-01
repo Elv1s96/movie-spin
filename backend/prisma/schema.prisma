@@ -11,6 +11,9 @@ model User {
   id           String   @id @default(cuid())
   email        String   @unique
   passwordHash String
+  // Токен публічного посилання на бібліотеку («Поділитися»). null — посилання
+  // не створене або відкликане; будь-хто з токеном бачить список лише на читання.
+  shareToken   String?  @unique
   createdAt    DateTime @default(now())
 
   wheels Wheel[]
@@ -45,6 +48,9 @@ model Movie {
   posterUrl   String?
   year        Int?
   genres      String[] @default([])
+  // Своє слово, додане прямо на сторінці колеса: у бібліотеці «Мої фільми»
+  // не показується, живе лише як позиція колеса.
+  isCustom    Boolean  @default(false)
   // Перегляд
   watched     Boolean  @default(false)
   watchedAt   DateTime?

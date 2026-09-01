@@ -3,13 +3,33 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { randomBytes } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateMovieDto, UpdateMovieDto } from './dto/movie.dto';
+
+// Поля, які віддаємо по публічному посиланню. userId свідомо не віддаємо —
+// гостю він ні до чого, а зайвий ідентифікатор власника назовні не потрібен.
+const PUBLIC_MOVIE_SELECT = {
+  id: true,
+  title: true,
+  description: true,
+  imdbRating: true,
+  posterUrl: true,
+  year: true,
+  genres: true,
+  watched: true,
+  watchedAt: true,
+  createdAt: true,
+} as const;
 
 export interface ImportResult {
   created: number;
   skipped: number;
   genresAdded: number;
+}
+
+export interface ShareInfo {
+  token: string | null;
 }
 
 @Injectable()
@@ -23,9 +43,10 @@ export class MoviesService {
     return movie;
   }
 
+  // Бібліотека: без «своїх слів» з коліс — вони не фільми й живуть лише в колесі.
   findAll(userId: string) {
     return this.prisma.movie.findMany({
-      where: { userId },
+      where: { userId, isCustom: false },
       orderBy: { createdAt: 'desc' },
     });
   }
@@ -107,5 +128,52 @@ export class MoviesService {
     await this.assertOwned(movieId, userId);
     await this.prisma.movie.delete({ where: { id: movieId } });
     return { ok: true };
+  }
+
+  // ── Публічне посилання на бібліотеку ──────────────────────────────────────
+  // Один токен на користувача: створення повторно — це перевипуск (старе
+  // посилання одразу перестає працювати), видалення — відкликання.
+
+  async getShare(userId: string): Promise<ShareInfo> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { shareToken: true },
+    });
+    return { token: user?.shareToken ?? null };
+  }
+
+  async createShare(userId: string): Promise<ShareInfo> {
+    const token = randomBytes(24).toString('base64url');
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { shareToken: token },
+    });
+    return { token };
+  }
+
+  async revokeShare(userId: string): Promise<ShareInfo> {
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { shareToken: null },
+    });
+    return { token: null };
+  }
+
+  // Читання бібліотеки по токену — єдиний вхід для незалогіненого гостя.
+  // Порожній токен ніколи не має збігатися з NULL у базі, тому перевіряємо явно.
+  async findAllByShareToken(token: string) {
+    if (!token) throw new NotFoundException('Посилання недійсне');
+    const owner = await this.prisma.user.findUnique({
+      where: { shareToken: token },
+      select: { id: true },
+    });
+    if (!owner) throw new NotFoundException('Посилання недійсне або відкликане');
+
+    const movies = await this.prisma.movie.findMany({
+      where: { userId: owner.id, isCustom: false },
+      orderBy: { createdAt: 'desc' },
+      select: PUBLIC_MOVIE_SELECT,
+    });
+    return { movies };
   }
 }

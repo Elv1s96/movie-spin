@@ -2,7 +2,7 @@
 import { ref, reactive, onMounted, onUnmounted, computed, watch } from 'vue'
 import { http, apiError } from '../api/http'
 import AppHeader from '../components/AppHeader.vue'
-import type { Movie, Genre, WheelSummary } from '../types'
+import type { Movie, Genre, WheelSummary, ShareInfo } from '../types'
 
 const movies = ref<Movie[]>([])
 const genres = ref<Genre[]>([])
@@ -12,7 +12,9 @@ const error = ref('')
 
 // Модалка «додати фільм у колесо».
 const wheelTarget = ref<Movie | null>(null)
+// Колеса, куди фільм додали щойно, і колеса, де він уже був до відкриття модалки.
 const addedWheelIds = ref<string[]>([])
+const onWheelIds = ref<string[]>([])
 const addingWheelId = ref<string | null>(null)
 
 // Ввід нового жанру прямо у формі фільму (додає в каталог і одразу обирає).
@@ -91,6 +93,13 @@ function clearFilters() {
 
 function today(): string {
   return new Date().toISOString().slice(0, 10)
+}
+
+// Неоновий колір картки — стабільний за id, щоб не стрибав між рендерами.
+function neonClass(id: string): string {
+  let h = 0
+  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) % 997
+  return `n${h % 6}`
 }
 
 function fmtDate(iso: string | null): string {
@@ -231,10 +240,14 @@ async function loadGenres() {
   }
 }
 
-async function loadWheels() {
+// movieId — щоб бекенд позначив колеса, де цей фільм уже є (hasMovie).
+async function loadWheels(movieId?: string) {
   try {
-    const { data } = await http.get<WheelSummary[]>('/wheels')
+    const { data } = await http.get<WheelSummary[]>('/wheels', {
+      params: movieId ? { movieId } : undefined,
+    })
     wheels.value = data
+    if (movieId) onWheelIds.value = data.filter((w) => w.hasMovie).map((w) => w.id)
   } catch (e) {
     error.value = apiError(e)
   }
@@ -243,7 +256,13 @@ async function loadWheels() {
 function openAddToWheel(m: Movie) {
   wheelTarget.value = m
   addedWheelIds.value = []
-  loadWheels()
+  onWheelIds.value = []
+  loadWheels(m.id)
+}
+
+// Фільм уже на колесі: або був там раніше, або його щойно додали.
+function isOnWheel(w: WheelSummary) {
+  return onWheelIds.value.includes(w.id) || addedWheelIds.value.includes(w.id)
 }
 
 function closeAddToWheel() {
@@ -253,13 +272,13 @@ function closeAddToWheel() {
 // Додати обраний фільм у колесо. Бекенд робить upsert, тож повтор безпечний;
 // після додавання перечитуємо колеса, щоб лічильник фільмів був точним.
 async function addToWheel(w: WheelSummary) {
-  if (!wheelTarget.value || addedWheelIds.value.includes(w.id)) return
+  if (!wheelTarget.value || isOnWheel(w)) return
   addingWheelId.value = w.id
   error.value = ''
   try {
     await http.post(`/wheels/${w.id}/items`, { movieId: wheelTarget.value.id })
     addedWheelIds.value.push(w.id)
-    await loadWheels()
+    await loadWheels(wheelTarget.value.id)
   } catch (e) {
     error.value = apiError(e)
   } finally {
@@ -418,17 +437,104 @@ async function remove(id: string) {
 
 // Esc закриває модалку редагування; поки вона відкрита — сторінка під нею не скролиться.
 function onKeydown(e: KeyboardEvent) {
-  if (e.key === 'Escape' && editorOpen.value) closeEditor()
+  if (e.key !== 'Escape') return
+  if (editorOpen.value) closeEditor()
+  else if (detail.value) closeDetail()
+  else if (shareOpen.value) closeShare()
 }
 
-watch(editorOpen, (open) => {
-  document.body.style.overflow = open ? 'hidden' : ''
+// Повний опис фільму в модалці — лише читання. У сітці опис обрізаний трьома
+// рядками, а лізти заради нього в редагування незручно.
+const detail = ref<Movie | null>(null)
+
+function openDetail(m: Movie) {
+  detail.value = m
+}
+function closeDetail() {
+  detail.value = null
+}
+
+// ── Публічне посилання на бібліотеку ────────────────────────────────────────
+// Один токен на акаунт. Токен тримаємо окремо від URL, бо посилання будуємо
+// з поточного origin — щоб воно працювало і локально, і на проді.
+const shareOpen = ref(false)
+const shareToken = ref<string | null>(null)
+const shareBusy = ref(false)
+const shareCopied = ref(false)
+const shareError = ref('')
+
+const shareUrl = computed(() =>
+  shareToken.value ? `${window.location.origin}/shared/${shareToken.value}` : '',
+)
+
+async function loadShare() {
+  try {
+    const { data } = await http.get<ShareInfo>('/movies/share')
+    shareToken.value = data.token
+  } catch (e) {
+    shareError.value = apiError(e)
+  }
+}
+
+function openShare() {
+  shareError.value = ''
+  shareCopied.value = false
+  shareOpen.value = true
+}
+function closeShare() {
+  shareOpen.value = false
+}
+
+// Створення при вже наявному токені — це перевипуск: старе посилання вмирає.
+async function createShare() {
+  shareBusy.value = true
+  shareError.value = ''
+  shareCopied.value = false
+  try {
+    const { data } = await http.post<ShareInfo>('/movies/share')
+    shareToken.value = data.token
+  } catch (e) {
+    shareError.value = apiError(e)
+  } finally {
+    shareBusy.value = false
+  }
+}
+
+async function revokeShare() {
+  shareBusy.value = true
+  shareError.value = ''
+  shareCopied.value = false
+  try {
+    await http.delete('/movies/share')
+    shareToken.value = null
+  } catch (e) {
+    shareError.value = apiError(e)
+  } finally {
+    shareBusy.value = false
+  }
+}
+
+// clipboard недоступний на http (крім localhost) — тоді просто підсвічуємо
+// поле, щоб посилання можна було скопіювати руками.
+async function copyShare() {
+  if (!shareUrl.value) return
+  try {
+    await navigator.clipboard.writeText(shareUrl.value)
+    shareCopied.value = true
+  } catch {
+    shareError.value = 'Не вдалося скопіювати — виділи посилання вручну.'
+  }
+}
+
+watch([editorOpen, detail], ([open, m]) => {
+  document.body.style.overflow = open || m ? 'hidden' : ''
 })
 
 onMounted(() => {
   load()
   loadGenres()
   loadWheels()
+  loadShare()
   window.addEventListener('keydown', onKeydown)
 })
 
@@ -447,7 +553,7 @@ onUnmounted(() => {
       <div class="lib-head">
         <div class="eyebrow">Бібліотека</div>
         <div class="lib-tools">
-          <button class="btn btn-primary btn-sm" @click="openCreate">+ Додати фільм</button>
+          <button class="btn btn-ghost btn-sm" @click="openCreate">+ Додати фільм</button>
           <a class="link-btn" href="/movies.example.json" download>Приклад JSON</a>
           <button class="btn btn-ghost btn-sm" :disabled="!movies.length" @click="exportJson">
             ↧ Експорт
@@ -456,6 +562,9 @@ onUnmounted(() => {
             {{ importing ? 'Імпорт…' : '↥ Імпорт з JSON' }}
             <input type="file" accept="application/json,.json" @change="onImport" :disabled="importing" hidden />
           </label>
+          <button class="btn btn-ghost btn-sm" :class="{ shared: shareToken }" @click="openShare">
+            ↗ Поділитися{{ shareToken ? ' ✓' : '' }}
+          </button>
           <span class="count">
             {{ filtersActive ? `${filteredMovies.length} / ${movies.length}` : movies.length }} фільм(ів)
           </span>
@@ -496,10 +605,24 @@ onUnmounted(() => {
       <div v-else-if="!filteredMovies.length" class="muted">Нічого не знайдено за фільтром.</div>
 
       <div v-else class="grid">
-        <article v-for="m in filteredMovies" :key="m.id" class="card" :class="{ seen: m.watched }">
-          <div class="card-poster">
+        <article
+          v-for="m in filteredMovies"
+          :key="m.id"
+          class="card"
+          :class="[neonClass(m.id), { seen: m.watched }]"
+        >
+          <div
+            class="card-poster"
+            role="button"
+            tabindex="0"
+            title="Показати повний опис"
+            :aria-label="`Показати опис: ${m.title}`"
+            @click="openDetail(m)"
+            @keydown.enter.prevent="openDetail(m)"
+            @keydown.space.prevent="openDetail(m)"
+          >
             <img v-if="m.posterUrl" :src="m.posterUrl" alt="" />
-            <span v-else class="poster-ph">Без постера</span>
+            <span v-else class="poster-ph">постер</span>
             <span v-if="m.imdbRating != null" class="imdb">★ {{ m.imdbRating.toFixed(1) }}</span>
             <span v-if="m.watched" class="seen-badge" title="Переглянуто">
               <svg viewBox="0 0 24 24" width="14" height="14"><path fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" d="M20 6 9 17l-5-5"/></svg>
@@ -675,19 +798,107 @@ onUnmounted(() => {
               :key="w.id"
               type="button"
               class="wheel-opt"
-              :class="{ added: addedWheelIds.includes(w.id) }"
-              :disabled="addingWheelId === w.id || addedWheelIds.includes(w.id)"
+              :class="{ added: isOnWheel(w) }"
+              :disabled="addingWheelId === w.id || isOnWheel(w)"
               @click="addToWheel(w)"
             >
               <span class="wheel-opt-name">{{ w.name }}</span>
               <span class="wheel-opt-meta">
-                {{ addedWheelIds.includes(w.id) ? 'Додано ✓' : `${w._count.items} фільм.` }}
+                <span v-if="isOnWheel(w)" class="wheel-opt-mark">
+                  {{ addedWheelIds.includes(w.id) ? 'Додано ✓' : 'Уже в колесі ✓' }}
+                </span>
+                <span v-else>{{ w._count.items }} фільм.</span>
               </span>
             </button>
           </div>
 
           <div class="wm-actions">
             <button class="btn btn-ghost" @click="closeAddToWheel">Готово</button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- Модальне вікно публічного посилання на бібліотеку -->
+    <Teleport to="body">
+      <div v-if="shareOpen" class="overlay" @click.self="closeShare">
+        <div class="modal modal-sm">
+          <div class="wm-eyebrow">Публічне посилання</div>
+          <p class="share-hint">
+            Будь-хто з цим посиланням побачить твій список фільмів і зможе користуватися
+            фільтрами. Змінювати щось не зможе — тільки дивитися.
+          </p>
+
+          <template v-if="shareToken">
+            <input class="field share-url" :value="shareUrl" readonly @focus="($event.target as HTMLInputElement).select()" />
+            <p v-if="shareCopied" class="share-ok">Скопійовано ✓</p>
+          </template>
+          <p v-else class="muted">Посилання ще не створене.</p>
+
+          <p v-if="shareError" class="err">{{ shareError }}</p>
+
+          <div class="wm-actions">
+            <button v-if="shareToken" class="btn btn-primary" :disabled="shareBusy" @click="copyShare">
+              Копіювати
+            </button>
+            <button class="btn" :class="shareToken ? 'btn-ghost' : 'btn-primary'" :disabled="shareBusy" @click="createShare">
+              {{ shareBusy ? '…' : shareToken ? 'Створити нове' : 'Створити посилання' }}
+            </button>
+            <button v-if="shareToken" class="btn btn-ghost" :disabled="shareBusy" @click="revokeShare">
+              Відкликати
+            </button>
+            <button class="btn btn-ghost" @click="closeShare">Закрити</button>
+          </div>
+          <p v-if="shareToken" class="share-warn">
+            «Створити нове» і «Відкликати» одразу ламають старе посилання.
+          </p>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- Повний опис фільму. Тільки читання — редагування живе в окремій модалці. -->
+    <Teleport to="body">
+      <div v-if="detail" class="overlay" @click.self="closeDetail">
+        <div class="modal modal-lg">
+          <div class="modal-head">
+            <div class="eyebrow">Про фільм</div>
+            <button class="close" title="Закрити" @click="closeDetail">✕</button>
+          </div>
+
+          <div class="modal-body">
+            <div class="detail-grid">
+              <div class="detail-poster">
+                <img v-if="detail.posterUrl" :src="detail.posterUrl" alt="" />
+                <span v-else class="poster-ph">постер</span>
+              </div>
+
+              <div class="detail-info">
+                <h2 class="detail-title">{{ detail.title }}</h2>
+                <div class="detail-meta">
+                  <span v-if="detail.year">{{ detail.year }}</span>
+                  <span v-if="detail.imdbRating != null" class="detail-imdb">
+                    ★ {{ detail.imdbRating.toFixed(1) }} IMDb
+                  </span>
+                  <span class="detail-seen" :class="{ on: detail.watched }">
+                    <template v-if="detail.watched">
+                      Переглянуто{{ detail.watchedAt ? ` · ${fmtDate(detail.watchedAt)}` : '' }}
+                    </template>
+                    <template v-else>Не переглянуто</template>
+                  </span>
+                </div>
+
+                <div v-if="detail.genres.length" class="genres">
+                  <span v-for="g in detail.genres" :key="g" class="chip-sm">{{ g }}</span>
+                </div>
+
+                <p v-if="detail.description" class="detail-desc">{{ detail.description }}</p>
+                <p v-else class="muted">Опису немає.</p>
+              </div>
+            </div>
+          </div>
+
+          <div class="modal-foot">
+            <button class="btn btn-ghost" @click="closeDetail">Закрити</button>
           </div>
         </div>
       </div>
@@ -703,144 +914,246 @@ onUnmounted(() => {
 .editor-grid { display: grid; grid-template-columns: 200px 1fr; gap: 24px; }
 .poster-col { display: flex; flex-direction: column; gap: 10px; }
 .poster-preview {
-  width: 100%; aspect-ratio: 2/3; background: var(--bg); border: 2px solid var(--line-soft);
+  width: 100%; aspect-ratio: 2/3; border-radius: 10px;
+  background: rgba(8, 4, 20, 0.7); border: 1.5px solid var(--line-soft);
   display: flex; align-items: center; justify-content: center; overflow: hidden;
 }
 .poster-preview img { width: 100%; height: 100%; object-fit: cover; }
-.poster-ph { color: var(--ink-faint); font-size: 13px; }
+.poster-ph {
+  color: var(--ink-faint); font-size: 12px; letter-spacing: 0.18em; text-transform: lowercase;
+}
 .upload { text-align: center; cursor: pointer; }
 .fields-col { display: flex; flex-direction: column; gap: 12px; }
 .field.area { resize: vertical; line-height: 1.5; }
 .row { display: flex; gap: 12px; }
-.mini { display: flex; flex-direction: column; gap: 4px; flex: 1; }
-.mini > span { font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--ink-faint); }
+.mini { display: flex; flex-direction: column; gap: 5px; flex: 1; }
+.mini > span { font-size: 11px; text-transform: uppercase; letter-spacing: 0.16em; color: var(--ink-faint); }
 .watch-row { display: flex; gap: 16px; align-items: flex-end; }
 .check { display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 14px; font-weight: 600; padding-bottom: 9px; }
 .check input { width: 18px; height: 18px; accent-color: var(--accent); cursor: pointer; }
 .mini.date { flex: 0 0 auto; }
 
-.lib-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
-.lib-tools { display: flex; align-items: center; gap: 14px; }
+.lib-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.lib-head .eyebrow { font-size: 14px; letter-spacing: 0.26em; color: var(--ink); }
+.lib-tools { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .import { cursor: pointer; }
-.import-msg { font-size: 13px; font-weight: 600; color: var(--accent); margin-top: -8px; }
+.import-msg {
+  font-size: 13px; font-weight: 600; color: var(--accent-4); margin-top: -8px;
+  text-shadow: 0 0 12px rgba(57, 255, 168, 0.45);
+}
 
 /* Панель фільтрів бібліотеки */
-.filter-bar { display: flex; flex-direction: column; gap: 12px; }
-.filter-bar .search { max-width: 420px; }
-.filter-genres { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.filter-bar { display: flex; flex-direction: column; gap: 14px; }
+.filter-bar .search { max-width: 520px; }
+.filter-genres { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .filter-genres .clear { margin-left: 4px; }
-.filter-watched { display: inline-flex; width: fit-content; border: 2px solid var(--line-soft); }
-.seg {
-  padding: 7px 14px; background: transparent; border: none;
-  border-right: 2px solid var(--line-soft); color: var(--ink-muted);
-  font-size: 13px; font-weight: 700; cursor: pointer; transition: background 0.12s, color 0.12s;
+.filter-watched {
+  display: inline-flex; width: fit-content;
+  border: 1.5px solid var(--line-soft); border-radius: 999px; overflow: hidden;
+  background: rgba(10, 5, 24, 0.5);
 }
-.seg:last-child { border-right: none; }
-.seg:hover:not(.on) { color: var(--ink); }
-.seg.on { background: var(--accent); color: #1a1600; }
-.count { font-size: 12px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--ink-faint); }
+.seg {
+  padding: 8px 16px; background: transparent; border: none;
+  color: var(--ink-muted); font-size: 12px; font-weight: 700; letter-spacing: 0.06em;
+  cursor: pointer; transition: background 0.18s, color 0.18s, box-shadow 0.18s;
+}
+.seg:hover:not(.on) { color: var(--accent-2); }
+.seg.on {
+  background: linear-gradient(100deg, var(--accent) 0%, #c026d3 100%);
+  color: #fff; box-shadow: 0 0 18px rgba(255, 45, 149, 0.45);
+}
+.count { font-size: 12px; letter-spacing: 0.12em; color: var(--ink-faint); }
 .muted { color: var(--ink-faint); font-size: 15px; }
 
-.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 18px; }
-.card { border: 2px solid var(--line-soft); background: var(--surface); display: flex; flex-direction: column; overflow: hidden; transition: border-color 0.12s; }
-.card.seen { border-color: color-mix(in srgb, var(--accent) 45%, var(--line-soft)); }
-.card-poster { position: relative; aspect-ratio: 2/3; background: var(--bg); display: flex; align-items: center; justify-content: center; }
-.card-poster img { width: 100%; height: 100%; object-fit: cover; }
-.card.seen .card-poster img { filter: grayscale(0.35) brightness(0.92); }
+/* Сітка карток */
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(215px, 1fr)); gap: 22px; }
+.card {
+  --neon: var(--accent-3);
+  position: relative;
+  border: 1.5px solid var(--neon);
+  border-radius: 14px;
+  background: linear-gradient(180deg, rgba(24, 17, 48, 0.9) 0%, rgba(13, 8, 28, 0.94) 100%);
+  display: flex; flex-direction: column; overflow: hidden;
+  box-shadow: 0 0 14px -2px var(--neon), 0 0 34px -12px var(--neon), 0 10px 30px rgba(0, 0, 0, 0.5);
+  transition: transform 0.18s, box-shadow 0.18s;
+}
+.card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 0 20px -1px var(--neon), 0 0 52px -8px var(--neon), 0 16px 40px rgba(0, 0, 0, 0.55);
+}
+.card.seen { opacity: 0.92; }
+
+/* Колір неону картки — задається класом n0…n5 зі скрипта */
+.card.n0 { --neon: var(--neon-0); }
+.card.n1 { --neon: var(--neon-1); }
+.card.n2 { --neon: var(--neon-2); }
+.card.n3 { --neon: var(--neon-3); }
+.card.n4 { --neon: var(--neon-4); }
+.card.n5 { --neon: var(--neon-5); }
+
+.card-poster {
+  position: relative; aspect-ratio: 2/3;
+  display: flex; align-items: center; justify-content: center;
+  margin: 8px 8px 0; border-radius: 10px; overflow: hidden;
+  background:
+    repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.035) 0 10px, transparent 10px 20px),
+    #171130;
+}
+.card-poster { cursor: pointer; transition: box-shadow 0.18s; }
+.card-poster:hover { box-shadow: inset 0 0 0 1.5px var(--neon); }
+.card-poster:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--accent-2); }
+.card-poster img { width: 100%; height: 100%; object-fit: cover; transition: transform 0.25s; }
+.card-poster:hover img { transform: scale(1.04); }
+.card.seen .card-poster img { filter: grayscale(0.4) brightness(0.85); }
+
 .imdb {
-  position: absolute; top: 8px; right: 8px; background: var(--accent); color: #1a1600;
-  font-size: 12px; font-weight: 800; padding: 3px 7px;
+  position: absolute; bottom: 8px; right: 8px;
+  background: rgba(10, 5, 24, 0.82); border: 1px solid var(--neon); color: var(--neon);
+  font-size: 12px; font-weight: 800; padding: 3px 8px; border-radius: 999px;
+  backdrop-filter: blur(4px);
 }
 .seen-badge {
-  position: absolute; top: 8px; left: 8px; width: 24px; height: 24px;
-  background: var(--accent); color: #1a1600; display: flex; align-items: center; justify-content: center;
+  position: absolute; top: 8px; left: 8px; width: 24px; height: 24px; border-radius: 50%;
+  background: var(--accent-4); color: #04180e;
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 0 14px rgba(57, 255, 168, 0.6);
 }
+
 .card-body { padding: 14px; display: flex; flex-direction: column; gap: 8px; flex: 1; }
-.card-body h3 { font-size: 17px; line-height: 1.2; }
-.year { color: var(--ink-faint); font-weight: 600; font-size: 14px; }
+.card-body h3 {
+  font-size: 16px; line-height: 1.25; font-weight: 600;
+  color: var(--neon); text-shadow: 0 0 14px color-mix(in srgb, var(--neon) 45%, transparent);
+}
+.year { display: block; margin-top: 3px; color: var(--ink-faint); font-weight: 500; font-size: 13px; }
 .desc {
   font-size: 13px; color: var(--ink-dim); line-height: 1.45;
   display: -webkit-box; -webkit-line-clamp: 3; line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
 }
 .genres { display: flex; flex-wrap: wrap; gap: 5px; }
 .chip-sm {
-  font-size: 11px; font-weight: 600; color: var(--ink-dim);
-  background: var(--bg); border: 1px solid var(--line-soft);
-  padding: 2px 8px; border-radius: 999px; white-space: nowrap;
+  font-size: 11px; font-weight: 600; color: var(--ink-muted);
+  background: rgba(255, 255, 255, 0.03); border: 1px solid var(--line-soft);
+  padding: 2px 9px; border-radius: 999px; white-space: nowrap;
 }
 
-/* Вибір жанрів чипсами у формі */
-.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+/* Вибір жанрів чипсами */
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
 .chip {
-  font-size: 12px; font-weight: 600; color: var(--ink-muted);
-  background: var(--bg); border: 1.5px solid var(--line-soft);
-  padding: 4px 11px; border-radius: 999px; cursor: pointer;
-  transition: border-color 0.12s, color 0.12s, background 0.12s;
+  font-size: 13px; font-weight: 500; color: var(--ink-dim);
+  background: rgba(10, 5, 24, 0.5); border: 1.5px solid var(--line-soft);
+  padding: 7px 16px; border-radius: 999px; cursor: pointer;
+  transition: border-color 0.18s, color 0.18s, background 0.18s, box-shadow 0.18s;
 }
-.chip:hover { border-color: var(--ink-muted); color: var(--ink); }
+.chip:hover {
+  border-color: var(--accent-2); color: var(--accent-2);
+  box-shadow: 0 0 14px rgba(34, 224, 255, 0.3);
+}
 .chip.on {
-  background: var(--accent); border-color: var(--accent);
-  color: #1a1600; font-weight: 800;
+  background: linear-gradient(100deg, var(--accent) 0%, #c026d3 100%);
+  border-color: var(--accent); color: #fff; font-weight: 700;
+  box-shadow: 0 0 18px rgba(255, 45, 149, 0.5);
 }
 .chips-empty { font-size: 12px; color: var(--ink-faint); }
 .chip-add { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .chip-add .field { flex: 1; min-width: 140px; }
 
-/* Перехід на сторінку керування каталогом жанрів. */
+/* Модалка з повним описом */
+.detail-grid { display: grid; grid-template-columns: 220px 1fr; gap: 24px; align-items: start; }
+.detail-poster {
+  width: 100%; aspect-ratio: 2/3; border-radius: 10px; overflow: hidden;
+  display: flex; align-items: center; justify-content: center;
+  border: 1.5px solid var(--line-soft);
+  background:
+    repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.035) 0 10px, transparent 10px 20px),
+    #171130;
+}
+.detail-poster img { width: 100%; height: 100%; object-fit: cover; }
+.detail-info { display: flex; flex-direction: column; gap: 14px; }
+.detail-title {
+  font-size: 26px; font-weight: 700; line-height: 1.2; color: var(--accent-2);
+  text-shadow: 0 0 16px rgba(34, 224, 255, 0.4);
+}
+.detail-meta {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 14px;
+  font-size: 13px; color: var(--ink-faint);
+}
+.detail-imdb { color: var(--accent-3); font-weight: 700; }
+.detail-seen { font-size: 11px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; }
+.detail-seen.on { color: var(--accent-4); text-shadow: 0 0 12px rgba(57, 255, 168, 0.4); }
+/* Головне тут — опис БЕЗ обрізання, на відміну від картки в сітці. */
+.detail-desc {
+  font-size: 15px; line-height: 1.65; color: var(--ink-dim); white-space: pre-line;
+}
+
+/* Публічне посилання */
+.btn.shared { border-color: var(--accent-4); color: var(--accent-4); }
+.share-hint { font-size: 13px; color: var(--ink-dim); line-height: 1.5; }
+.share-url { font-size: 13px; width: 100%; }
+.share-ok {
+  font-size: 12px; font-weight: 700; color: var(--accent-4);
+  text-shadow: 0 0 12px rgba(57, 255, 168, 0.45);
+}
+.share-warn { font-size: 11px; color: var(--ink-faint); line-height: 1.45; }
+
 .manage { text-decoration: none; display: inline-flex; align-items: center; white-space: nowrap; }
 .link-btn {
   background: none; border: none; padding: 0; cursor: pointer;
   font-size: 12px; color: var(--ink-muted); text-decoration: underline;
 }
-.link-btn:hover { color: var(--ink); }
-.seen-line { font-size: 12px; font-weight: 700; letter-spacing: 0.02em; color: var(--ink-faint); }
-.seen-line.on { color: var(--accent); }
+.link-btn:hover { color: var(--accent-2); }
+.seen-line { font-size: 11px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-faint); }
+.seen-line.on { color: var(--accent-4); text-shadow: 0 0 12px rgba(57, 255, 168, 0.4); }
 
-.card-actions { display: flex; gap: 8px; margin-top: auto; padding-top: 4px; }
+.card-actions { display: flex; gap: 6px; margin-top: auto; padding-top: 4px; }
 .icon-btn {
-  width: 36px; height: 36px; flex: 0 0 36px;
+  width: 34px; height: 30px; flex: 1;
   display: flex; align-items: center; justify-content: center;
-  border: 2px solid var(--line-soft); background: transparent; color: var(--ink-muted);
-  cursor: pointer; transition: border-color 0.12s, color 0.12s, background 0.12s;
+  border: 1px solid var(--line-soft); border-radius: 7px;
+  background: rgba(255, 255, 255, 0.02); color: var(--ink-muted);
+  cursor: pointer; transition: border-color 0.18s, color 0.18s, box-shadow 0.18s;
 }
-.icon-btn:hover { border-color: var(--ink); color: var(--ink); }
-.icon-btn.watch.on { border-color: var(--accent); color: var(--accent); }
-.icon-btn.del:hover { border-color: var(--danger); color: var(--danger); }
+.icon-btn:hover {
+  border-color: var(--neon, var(--accent-2)); color: var(--neon, var(--accent-2));
+  box-shadow: 0 0 12px -2px var(--neon, var(--accent-2));
+}
+.icon-btn.watch.on { border-color: var(--accent-4); color: var(--accent-4); box-shadow: 0 0 12px -2px var(--accent-4); }
+.icon-btn.del:hover { border-color: var(--danger); color: var(--danger); box-shadow: 0 0 12px -2px var(--danger); }
 
 /* Спільна основа для всіх модалок сторінки */
 .overlay {
   position: fixed; inset: 0; z-index: 100;
-  background: rgba(0, 0, 0, 0.6);
+  background: rgba(4, 2, 12, 0.75);
+  backdrop-filter: blur(6px);
   display: flex; align-items: center; justify-content: center; padding: 20px;
 }
 .modal {
-  background: var(--surface); border: 2px solid var(--line-soft);
-  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6);
+  background: linear-gradient(180deg, #1a1338 0%, #100a26 100%);
+  border: 1.5px solid var(--line); border-radius: 16px;
+  box-shadow: 0 0 40px -10px var(--accent-3), 0 30px 70px rgba(0, 0, 0, 0.7);
   display: flex; flex-direction: column; max-height: 90vh;
 }
-.modal-sm { width: min(380px, 92vw); padding: 24px; gap: 14px; }
+.modal-sm { width: min(380px, 92vw); padding: 26px; gap: 14px; }
 .modal-lg { width: min(760px, 94vw); }
 
-/* Модалка редактора фільму: шапка й підвал прибиті, тіло скролиться */
 .modal-head {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
-  padding: 18px 24px; border-bottom: 2px solid var(--line-soft);
+  padding: 18px 24px; border-bottom: 1px solid var(--line-soft);
 }
 .modal-body { padding: 24px; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; }
 .modal-foot {
   display: flex; gap: 12px; padding: 16px 24px;
-  border-top: 2px solid var(--line-soft); background: var(--surface);
+  border-top: 1px solid var(--line-soft);
 }
 .close {
-  width: 32px; height: 32px; flex: 0 0 32px;
+  width: 32px; height: 32px; flex: 0 0 32px; border-radius: 8px;
   display: flex; align-items: center; justify-content: center;
   background: transparent; border: none; color: var(--ink-muted);
-  font-size: 16px; cursor: pointer; transition: color 0.12s;
+  font-size: 16px; cursor: pointer; transition: color 0.18s, background 0.18s;
 }
-.close:hover { color: var(--ink); }
-.wm-eyebrow { font-size: 11px; text-transform: uppercase; letter-spacing: 0.12em; color: var(--ink-faint); }
-.wm-movie { font-size: 18px; font-weight: 800; line-height: 1.25; }
-.wm-date { font-size: 18px; padding: 12px 14px; width: 100%; }
+.close:hover { color: var(--accent); background: rgba(255, 45, 149, 0.1); }
+.wm-eyebrow { font-size: 11px; text-transform: uppercase; letter-spacing: 0.18em; color: var(--accent-2); }
+.wm-movie { font-size: 19px; font-weight: 700; line-height: 1.25; }
+.wm-date { font-size: 17px; padding: 12px 15px; width: 100%; }
 .wm-actions { display: flex; flex-direction: column; gap: 10px; margin-top: 4px; }
 .wm-actions .btn { width: 100%; justify-content: center; text-align: center; white-space: normal; }
 
@@ -848,19 +1161,23 @@ onUnmounted(() => {
 .wheel-list { display: flex; flex-direction: column; gap: 8px; max-height: 320px; overflow-y: auto; }
 .wheel-opt {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
-  padding: 12px 14px; text-align: left; cursor: pointer;
-  background: var(--bg); border: 2px solid var(--line-soft); color: var(--ink);
-  transition: border-color 0.12s, background 0.12s;
+  padding: 12px 15px; text-align: left; cursor: pointer; border-radius: 10px;
+  background: rgba(10, 5, 24, 0.6); border: 1.5px solid var(--line-soft); color: var(--ink);
+  transition: border-color 0.18s, box-shadow 0.18s;
 }
-.wheel-opt:hover:not(:disabled) { border-color: var(--accent); }
-.wheel-opt.added { border-color: var(--accent); color: var(--accent); cursor: default; }
-.wheel-opt-name { font-size: 15px; font-weight: 700; }
+.wheel-opt:hover:not(:disabled) { border-color: var(--accent-2); box-shadow: 0 0 16px -4px var(--accent-2); }
+.wheel-opt.added { border-color: var(--accent-4); color: var(--accent-4); cursor: default; }
+.wheel-opt-name { font-size: 15px; font-weight: 600; }
 .wheel-opt-meta { font-size: 12px; color: var(--ink-faint); white-space: nowrap; }
-.wheel-opt.added .wheel-opt-meta { color: var(--accent); }
-.err { color: #ff8a80; font-size: 14px; }
+.wheel-opt.added .wheel-opt-meta { color: var(--accent-4); }
+.wheel-opt-mark { font-weight: 700; letter-spacing: 0.04em; }
+.err { color: var(--danger); font-size: 14px; }
 
 @media (max-width: 640px) {
+  .wrap { padding: 20px 16px; }
   .editor-grid { grid-template-columns: 1fr; }
+  .detail-grid { grid-template-columns: 1fr; }
+  .detail-poster { max-width: 200px; }
   .poster-col { max-width: 200px; }
 }
 </style>

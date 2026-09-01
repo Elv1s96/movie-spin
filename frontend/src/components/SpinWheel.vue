@@ -17,14 +17,14 @@ const props = defineProps<{
 // через один, щоб сусідні сектори добре контрастували. Синхронізована з
 // FILLS у WheelView.vue (смужки/свотчі в списку — легенда колеса).
 const FILLS = [
-  { bg: '#ffd400', fg: '#141007' }, // жовтий
-  { bg: '#3ea0ff', fg: '#08111f' }, // синій
-  { bg: '#ff7a2f', fg: '#1f0c00' }, // помаранчевий
-  { bg: '#a877ff', fg: '#120724' }, // фіолетовий
-  { bg: '#43c66b', fg: '#06210f' }, // зелений
-  { bg: '#ff5fa2', fg: '#25061a' }, // рожевий
-  { bg: '#22c7c7', fg: '#032020' }, // бірюзовий
-  { bg: '#ff5147', fg: '#260403' }, // червоний
+  { bg: '#ff2d95', fg: '#2a0417' }, // неоновий рожевий
+  { bg: '#22e0ff', fg: '#032027' }, // бірюзовий
+  { bg: '#a35bff', fg: '#170430' }, // фіолетовий
+  { bg: '#39ffa8', fg: '#02240f' }, // зелений
+  { bg: '#ff7a45', fg: '#2a0d02' }, // помаранчевий
+  { bg: '#5b8bff', fg: '#050f2e' }, // синій
+  { bg: '#ffe14d', fg: '#2a2200' }, // жовтий
+  { bg: '#ff4d6d', fg: '#2d0410' }, // червоний
 ]
 
 const wheelEl = ref<HTMLElement | null>(null)
@@ -86,22 +86,28 @@ function wedgePath(s: { a0: number; a1: number; arc: number }): string {
   )
 }
 
-// Постер: радіальний прямокутник від центру (низ) до обода (верх),
-// ширина ≈ хорда клину, повернутий до mid, cover (slice) — без спотворення.
+// Постер: прямокутник, що описує клин у системі координат, повернутій до mid
+// (клин «дивиться» вгору). До 180° це радіальна смуга від центру (низ) до обода
+// (верх) завширшки з хорду клину. Понад 180° клин заходить нижче за центр —
+// тоді беремо всю ширину диска, а висоту продовжуємо нижче за центр на
+// 100·|cos(arc/2)|, інакше постер не покривав би клин і крізь нього прозирав
+// би колір фону (ті самі «жовті сегменти»).
 function posterImgAttrs(s: { mid: number; arc: number }) {
-  const w = s.arc >= 180 ? 200 : Math.max(12, 200 * Math.sin((s.arc / 2) * (Math.PI / 180)))
+  const half = (Math.min(s.arc, 360) / 2) * (Math.PI / 180)
+  const w = s.arc >= 180 ? 200 : Math.max(12, 200 * Math.sin(half))
+  const h = s.arc <= 180 ? 100 : 100 * (1 - Math.cos(half))
   return {
     x: (100 - w / 2).toFixed(3),
     y: '0',
     width: w.toFixed(3),
-    height: '100',
+    height: h.toFixed(3),
     preserveAspectRatio: 'xMidYMid slice',
     transform: `rotate(${s.mid} 100 100)`,
   }
 }
 
 const conic = computed(() => {
-  if (!sectors.value.length) return '#3a3634'
+  if (!sectors.value.length) return '#1c1540'
   const stops = sectors.value
     .map((s) => `${s.fill.bg} ${s.a0.toFixed(3)}deg ${s.a1.toFixed(3)}deg`)
     .join(',')
@@ -225,7 +231,7 @@ function burst() {
   const rect = c.getBoundingClientRect()
   c.width = rect.width
   c.height = rect.height
-  const cols = ['#ffd400', '#f5c518', '#ffe98a', '#f8f4f4', '#8a6a00']
+  const cols = ['#ff2d95', '#22e0ff', '#a35bff', '#39ffa8', '#ffe14d']
   for (let i = 0; i < 160; i++) {
     const a = -Math.PI / 2 + (Math.random() - 0.5) * 2.4
     const v = 7 + Math.random() * 14
@@ -347,37 +353,39 @@ defineExpose({ spinTo })
 }
 .wheel-box { position: absolute; inset: 0; }
 .wheel-shadow {
-  position: absolute; left: 8%; right: 8%; bottom: -3%; height: 8%;
-  border-radius: 50%; background: rgba(0, 0, 0, 0.55); filter: blur(18px);
+  position: absolute; left: 4%; right: 4%; bottom: -5%; height: 12%;
+  border-radius: 50%; background: rgba(163, 91, 255, 0.4); filter: blur(26px);
 }
 .wheel-rim {
   position: absolute; inset: 0; border-radius: 50%;
-  background: linear-gradient(#f8f4f4, #bab6b6);
-  box-shadow: 0 26px 60px rgba(0,0,0,.55), 0 2px 0 rgba(255,255,255,.35) inset, 0 -10px 22px rgba(0,0,0,.35) inset;
+  background: linear-gradient(160deg, #ff2d95 0%, #a35bff 45%, #22e0ff 100%);
+  box-shadow:
+    0 0 30px rgba(255, 45, 149, .45), 0 0 70px rgba(163, 91, 255, .35),
+    0 26px 60px rgba(0,0,0,.6), 0 1px 0 rgba(255,255,255,.25) inset;
 }
 .wheel-clip {
   position: absolute; inset: 3.4%; border-radius: 50%; overflow: hidden;
-  box-shadow: 0 0 0 2px rgba(32,30,29,.9), 0 14px 26px rgba(0,0,0,.5) inset;
+  box-shadow: 0 0 0 3px rgba(8,4,20,.95), 0 14px 26px rgba(0,0,0,.5) inset;
 }
 .wheel { position: absolute; inset: 0; border-radius: 50%; will-change: transform; }
 .poster-svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
 .gloss {
   position: absolute; inset: 0; border-radius: 50%; pointer-events: none;
-  background: radial-gradient(78% 60% at 34% 22%, rgba(255,255,255,.30) 0%, rgba(255,255,255,.06) 42%, rgba(255,255,255,0) 62%),
-              radial-gradient(100% 100% at 50% 105%, rgba(0,0,0,.42) 0%, rgba(0,0,0,0) 55%);
+  background: radial-gradient(78% 60% at 34% 22%, rgba(255,255,255,.22) 0%, rgba(255,255,255,.04) 42%, rgba(255,255,255,0) 62%),
+              radial-gradient(100% 100% at 50% 105%, rgba(4,2,12,.5) 0%, rgba(4,2,12,0) 55%);
 }
 .vignette {
   position: absolute; inset: 0; border-radius: 50%; pointer-events: none;
-  box-shadow: 0 0 44px 14px rgba(0,0,0,.45) inset;
+  box-shadow: 0 0 44px 14px rgba(4,2,12,.5) inset;
 }
 .pointer {
   position: absolute; top: -3.5%; left: 50%; margin-left: -17px;
   width: 34px; height: 58px; z-index: 15; transform-origin: 50% 10%;
-  filter: drop-shadow(0 6px 10px rgba(0,0,0,.6));
+  filter: drop-shadow(0 0 10px rgba(34, 224, 255, .8)) drop-shadow(0 6px 10px rgba(0,0,0,.6));
 }
 .pointer-body {
   position: absolute; inset: 0;
-  background: linear-gradient(#ffe27a, #ffd400 55%, #c9a200);
+  background: linear-gradient(#b8f6ff, #22e0ff 55%, #0f8fc4);
   clip-path: polygon(0 0, 100% 0, 50% 100%);
 }
 .pointer-shine {
@@ -387,16 +395,18 @@ defineExpose({ spinTo })
 .hub {
   position: absolute; top: 50%; left: 50%; width: 26%; height: 26%;
   transform: translate(-50%, -50%); border-radius: 50%; z-index: 12;
-  background: linear-gradient(#f8f4f4, #d7d3d3);
-  box-shadow: 0 10px 22px rgba(0,0,0,.55), 0 -4px 10px rgba(0,0,0,.25) inset, 0 3px 0 rgba(255,255,255,.7) inset;
+  background: linear-gradient(160deg, #ff2d95, #a35bff 60%, #22e0ff);
+  box-shadow: 0 0 26px rgba(255, 45, 149, .55), 0 10px 22px rgba(0,0,0,.6);
   display: flex; align-items: center; justify-content: center;
 }
 .hub-btn {
-  width: 82%; height: 82%; border-radius: 50%; border: 2px solid #201e1d;
-  background: linear-gradient(#2d2b2b, #141312); color: #f3f2f2;
-  font-size: 12px; font-weight: 900; line-height: 1.15; letter-spacing: .1em;
+  width: 86%; height: 86%; border-radius: 50%; border: none;
+  background: linear-gradient(#1a1338, #0a0518); color: #eae7ff;
+  font-size: 12px; font-weight: 800; line-height: 1.15; letter-spacing: .14em;
   text-transform: uppercase; white-space: pre-line; cursor: pointer;
-  box-shadow: 0 4px 10px rgba(0,0,0,.5) inset;
+  box-shadow: 0 4px 12px rgba(0,0,0,.6) inset, 0 0 16px rgba(34, 224, 255, .25) inset;
+  transition: color .18s, text-shadow .18s;
 }
-.hub-btn:disabled { background: #3a3634; color: #7d7979; cursor: not-allowed; }
+.hub-btn:hover:not(:disabled) { color: #22e0ff; text-shadow: 0 0 14px rgba(34, 224, 255, .7); }
+.hub-btn:disabled { color: var(--ink-faint); cursor: not-allowed; }
 </style>

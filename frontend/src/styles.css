@@ -1,89 +1,166 @@
-@import url('https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800;900&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800;900&display=swap');
 
 :root {
-  /* Палітра з дизайну Spin.html */
-  --bg: #201e1d;
-  --surface: #2a2726;
-  --surface-2: #35312f;
-  --ink: #f3f2f2;
-  --ink-dim: #bab6b6;
-  --ink-muted: #9b9797;
-  --ink-faint: #7d7979;
-  --line: rgba(243, 242, 242, 0.35);
-  --line-soft: #444141;
-  --accent: #ffd400;
-  --danger: #ec3013;
+  /* Неонова палітра: глибокий фіолет + рожевий/бірюзовий акценти */
+  --bg: #07040f;
+  --bg-2: #100826;
+  --surface: #15102b;
+  --surface-2: #1c1540;
+  --ink: #eae7ff;
+  --ink-dim: #b9b2df;
+  --ink-muted: #8e86bd;
+  --ink-faint: #6a6396;
+
+  --line: rgba(163, 91, 255, 0.32);
+  --line-soft: rgba(140, 100, 255, 0.22);
+
+  /* Акценти */
+  --accent: #ff2d95;          /* рожевий — головний */
+  --accent-2: #22e0ff;        /* бірюзовий */
+  --accent-3: #a35bff;        /* фіолетовий */
+  --accent-4: #39ffa8;        /* зелений */
+  --accent-5: #ff7a45;        /* помаранчевий */
+  --on-accent: #0a0418;       /* текст поверх залитого акценту */
+  --danger: #ff4d6d;
+
+  /* Циклічна неонова палітра карток */
+  --neon-0: #ff2d95;
+  --neon-1: #22e0ff;
+  --neon-2: #a35bff;
+  --neon-3: #39ffa8;
+  --neon-4: #ff7a45;
+  --neon-5: #5b8bff;
+
+  --glow: 0 0 12px rgba(255, 45, 149, 0.55);
+  --radius: 12px;
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
-html, body, #app {
-  height: 100%;
-}
+html, body, #app { height: 100%; }
 
 body {
-  background: var(--bg);
   color: var(--ink);
-  font-family: 'Archivo', system-ui, sans-serif;
+  font-family: 'Montserrat', system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
+  background:
+    radial-gradient(90% 60% at 92% -8%, rgba(178, 70, 255, 0.60) 0%, rgba(178, 70, 255, 0) 68%),
+    radial-gradient(70% 45% at 55% -5%, rgba(120, 40, 200, 0.35) 0%, rgba(120, 40, 200, 0) 70%),
+    radial-gradient(95% 65% at 8% 108%, rgba(0, 120, 255, 0.32) 0%, rgba(0, 120, 255, 0) 60%),
+    linear-gradient(180deg, #0d0726 0%, #07040f 55%, #05030c 100%);
+  background-attachment: fixed;
 }
 
-button { font-family: inherit; }
-input, textarea { font-family: inherit; }
+/* Сітка-горизонт унизу екрана — фон у стилі synthwave */
+body::after {
+  content: '';
+  position: fixed;
+  left: 0; right: 0; bottom: 0;
+  height: 38vh;
+  pointer-events: none;
+  z-index: 0;
+  background-image:
+    repeating-linear-gradient(90deg, rgba(34, 224, 255, 0.16) 0 1px, transparent 1px 72px),
+    repeating-linear-gradient(0deg, rgba(163, 91, 255, 0.16) 0 1px, transparent 1px 48px);
+  -webkit-mask-image: linear-gradient(to top, #000 0%, rgba(0, 0, 0, 0) 100%);
+  mask-image: linear-gradient(to top, #000 0%, rgba(0, 0, 0, 0) 100%);
+}
 
-h1, h2, h3, h4 { font-weight: 800; letter-spacing: -0.01em; }
+#app { position: relative; z-index: 1; }
+
+button { font-family: inherit; }
+input, textarea, select { font-family: inherit; }
+
+h1, h2, h3, h4 { font-weight: 700; letter-spacing: -0.01em; }
 
 a { color: inherit; }
 
+::selection { background: var(--accent); color: var(--on-accent); }
+
+/* Скролбари в тон темі */
+* { scrollbar-color: rgba(163, 91, 255, 0.45) transparent; scrollbar-width: thin; }
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-thumb {
+  background: rgba(163, 91, 255, 0.35); border-radius: 999px;
+  border: 3px solid transparent; background-clip: content-box;
+}
+*::-webkit-scrollbar-thumb:hover { background: rgba(255, 45, 149, 0.5); background-clip: content-box; }
+*::-webkit-scrollbar-track { background: transparent; }
+
 .eyebrow {
-  font-size: 11px;
-  font-weight: 800;
-  letter-spacing: 0.14em;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.22em;
   text-transform: uppercase;
-  color: var(--accent);
+  color: var(--ink-dim);
 }
 
 /* Кнопки */
 .btn {
-  padding: 11px 18px;
-  border: 2px solid var(--ink);
-  background: transparent;
+  padding: 10px 18px;
+  border: 1.5px solid var(--line);
+  background: rgba(255, 255, 255, 0.02);
   color: var(--ink);
-  font-size: 13px;
-  font-weight: 800;
+  font-size: 12px;
+  font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.12em;
   cursor: pointer;
-  border-radius: 0;
-  transition: background 0.12s, color 0.12s, border-color 0.12s;
+  border-radius: 8px;
+  transition: box-shadow 0.18s, border-color 0.18s, color 0.18s, background 0.18s, transform 0.12s;
 }
-.btn:hover:not(:disabled) { background: var(--accent); border-color: var(--accent); color: var(--bg); }
-.btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn:hover:not(:disabled) {
+  border-color: var(--accent-2);
+  color: var(--accent-2);
+  box-shadow: 0 0 14px rgba(34, 224, 255, 0.35), 0 0 22px rgba(34, 224, 255, 0.16) inset;
+}
+.btn:active:not(:disabled) { transform: translateY(1px); }
+.btn:disabled { opacity: 0.35; cursor: not-allowed; }
 
 .btn-primary {
-  border-color: var(--accent);
-  background: linear-gradient(#ffe15c, #ffd400 55%, #d9b100);
-  color: #1a1600;
+  /* Без рамки: прозора рамка поверх градієнта дає в Chrome видиму грань
+     збоку від заокруглення. 1.5px рамки компенсуємо padding'ом,
+     щоб висота збігалася з рештою кнопок у ряду. */
+  border: none;
+  padding: 11.5px 19.5px;
+  background: linear-gradient(100deg, #22e0ff 0%, #3d8bff 55%, #6a4bff 100%);
+  color: #04121a;
+  font-weight: 800;
+  box-shadow: 0 0 18px rgba(34, 224, 255, 0.45);
 }
-.btn-primary:hover:not(:disabled) { filter: brightness(1.05); }
+.btn-primary.btn-sm { padding: 9.5px 14.5px; }
+.btn-primary:hover:not(:disabled) {
+  color: #04121a;
+  filter: brightness(1.08);
+  box-shadow: 0 0 26px rgba(34, 224, 255, 0.65);
+}
 
 .btn-ghost { border-color: var(--line-soft); color: var(--ink-muted); }
-.btn-ghost:hover:not(:disabled) { border-color: var(--ink); color: var(--ink); background: transparent; }
+.btn-ghost:hover:not(:disabled) {
+  border-color: var(--accent); color: var(--accent);
+  box-shadow: 0 0 14px rgba(255, 45, 149, 0.3);
+}
 
-.btn-sm { padding: 8px 12px; font-size: 12px; }
+.btn-sm { padding: 8px 13px; font-size: 11px; }
 
 /* Поля вводу */
 .field {
   width: 100%;
-  padding: 12px 14px;
-  font-size: 15px;
-  border: 2px solid var(--line-soft);
-  background: var(--bg);
+  padding: 12px 15px;
+  font-size: 14px;
+  border: 1.5px solid var(--line-soft);
+  background: rgba(10, 5, 24, 0.6);
   color: var(--ink);
-  border-radius: 0;
+  border-radius: 10px;
   outline: none;
-  transition: border-color 0.12s;
+  transition: border-color 0.18s, box-shadow 0.18s;
 }
-.field:focus { border-color: var(--accent); }
+.field::placeholder { color: var(--ink-faint); }
+.field:hover { border-color: var(--line); }
+.field:focus {
+  border-color: var(--accent-2);
+  box-shadow: 0 0 0 3px rgba(34, 224, 255, 0.12), 0 0 16px rgba(34, 224, 255, 0.25);
+}
 
-.divider { height: 2px; background: var(--line); border: none; }
+.divider { height: 1px; background: var(--line); border: none; }
+

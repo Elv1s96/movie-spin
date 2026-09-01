@@ -26,9 +26,10 @@ import type { AuthUser } from '../auth/jwt.strategy';
 export class WheelsController {
   constructor(private readonly wheels: WheelsService) {}
 
+  // movieId (необов'язковий) — щоб у відповіді був прапорець hasMovie.
   @Get()
-  findAll(@CurrentUser() user: AuthUser) {
-    return this.wheels.findAll(user.id);
+  findAll(@CurrentUser() user: AuthUser, @Query('movieId') movieId?: string) {
+    return this.wheels.findAll(user.id, movieId);
   }
 
   @Post()
@@ -62,7 +63,7 @@ export class WheelsController {
     @Param('id') id: string,
     @Body() dto: AddItemDto,
   ) {
-    return this.wheels.addItem(id, user.id, dto.movieId, dto.weight);
+    return this.wheels.addItem(id, user.id, dto);
   }
 
   @Patch(':id/items/:itemId')

@@ -25,6 +25,14 @@ const router = createRouter({
       name: 'genres',
       component: () => import('../views/GenresView.vue'),
     },
+    // Публічний перегляд чужої бібліотеки по токену «Поділитися».
+    // Лише список + фільтри; жодних дій над фільмами тут немає.
+    {
+      path: '/shared/:token',
+      name: 'shared',
+      component: () => import('../views/SharedMoviesView.vue'),
+      meta: { public: true },
+    },
     {
       path: '/wheels/:id',
       name: 'wheel',
