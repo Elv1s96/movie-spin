@@ -19,6 +19,7 @@ model User {
   wheels Wheel[]
   movies Movie[]
   genres Genre[]
+  suggestionSessions SuggestionSession[]
 }
 
 // Каталог жанрів користувача — джерело для вибору чипсами у формі фільму.
@@ -57,9 +58,10 @@ model Movie {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  user  User          @relation(fields: [userId], references: [id], onDelete: Cascade)
-  items WheelItem[]
-  wins  SpinHistory[]
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  items       WheelItem[]
+  wins        SpinHistory[]
+  suggestions Suggestion[]
 
   @@index([userId])
 }
@@ -71,9 +73,10 @@ model Wheel {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  user  User          @relation(fields: [userId], references: [id], onDelete: Cascade)
-  items WheelItem[]
-  spins SpinHistory[]
+  user     User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  items    WheelItem[]
+  spins    SpinHistory[]
+  sessions SuggestionSession[]
 
   @@index([userId])
 }
@@ -103,4 +106,46 @@ model SpinHistory {
   movie Movie @relation(fields: [movieId], references: [id], onDelete: Cascade)
 
   @@index([wheelId])
+}
+
+// Сесія пропонування фільмів. Власник відкриває її поверх публічного посилання
+// й вибирає колесо, в яке падатимуть пропозиції гостей. Активна сесія
+// (closedAt = null) у користувача одна — старт нової закриває попередню.
+// Закриті сесії лишаємо: колесо вже набране, а історія «хто що пропонував»
+// нікому не заважає.
+model SuggestionSession {
+  id       String    @id @default(cuid())
+  userId   String
+  wheelId  String
+  // Налаштування сесії (питати ім'я гостя тощо) — одним Json-полем, а не
+  // окремими колонками: нову опцію можна додати без міграції. Форма опцій
+  // описана типом SessionOptions у suggestions/session-options.ts, звідти ж
+  // єдина нормалізація з дефолтами.
+  options  Json      @default("{}")
+  closedAt DateTime?
+  createdAt DateTime @default(now())
+
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  wheel       Wheel        @relation(fields: [wheelId], references: [id], onDelete: Cascade)
+  suggestions Suggestion[]
+
+  @@index([userId])
+}
+
+// Один запропонований гостем фільм. Живе окремо від WheelItem, бо позиції
+// колеса власник може міняти руками, а нам треба знати саме те, що прийшло
+// по посиланню — для позначки на картці й фільтра «Запропоновані».
+model Suggestion {
+  id        String   @id @default(cuid())
+  sessionId String
+  movieId   String
+  // Ім'я гостя, якщо сесія його питала; інакше null.
+  guestName String?
+  createdAt DateTime @default(now())
+
+  session SuggestionSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  movie   Movie             @relation(fields: [movieId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, movieId])
+  @@index([sessionId])
 }

@@ -81,3 +81,42 @@ export interface SpinHistoryEntry {
   createdAt: string
   movie: { id: string; title: string; posterUrl: string | null }
 }
+
+/**
+ * Налаштування сесії пропонування. Дзеркало SessionOptions з бекенду —
+ * зберігається одним Json-полем, тож нова опція додається сюди й у форму
+ * запуску, без міграції БД.
+ */
+export interface SuggestOptions {
+  /** Питати ім'я гостя перед пропозицією. */
+  askName: boolean
+  /** Ім'я обов'язкове — без нього пропозицію не приймуть. */
+  requireName: boolean
+}
+
+/** Активна сесія пропонування — те, що бачить власник списку. */
+export interface SuggestSession {
+  id: string
+  wheelId: string
+  wheelName: string
+  options: SuggestOptions
+  /** Скільки фільмів уже запропонували гості. */
+  count: number
+  createdAt: string
+}
+
+/** Один запропонований фільм у відповіді публічного посилання. */
+export interface SuggestedEntry {
+  movieId: string
+  guestName: string | null
+}
+
+/**
+ * Блок пропонування у відповіді публічного посилання.
+ * null → сесії немає, сторінка гостя працює лише на перегляд.
+ */
+export interface PublicSuggest {
+  wheelName: string
+  options: SuggestOptions
+  suggested: SuggestedEntry[]
+}

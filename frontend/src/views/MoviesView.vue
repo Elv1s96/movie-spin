@@ -2,7 +2,7 @@
 import { ref, reactive, onMounted, onUnmounted, computed, watch } from 'vue'
 import { http, apiError } from '../api/http'
 import AppHeader from '../components/AppHeader.vue'
-import type { Movie, Genre, WheelSummary, ShareInfo } from '../types'
+import type { Movie, Genre, WheelSummary, ShareInfo, SuggestSession } from '../types'
 
 const movies = ref<Movie[]>([])
 const genres = ref<Genre[]>([])
@@ -480,6 +480,8 @@ function openShare() {
   shareError.value = ''
   shareCopied.value = false
   shareOpen.value = true
+  // Поки модалка була закрита, гості могли напропонувати ще — оновлюємо лічильник.
+  loadSession()
 }
 function closeShare() {
   shareOpen.value = false
@@ -526,6 +528,79 @@ async function copyShare() {
   }
 }
 
+// ── Сесія пропонування фільмів ──────────────────────────────────────────────
+// Поверх публічного посилання: гості за ним не тільки дивляться список, а й
+// натискають «Запропонувати» — фільм одразу падає в обране колесо. Активна
+// сесія одна; закриття лишає колесо з набраними фільмами.
+const session = ref<SuggestSession | null>(null)
+const sessionBusy = ref(false)
+// '' — «створити нове колесо» (назва береться з sugNewWheel).
+const sugWheelId = ref('')
+const sugNewWheel = ref('')
+// Опції сесії. Нову опцію додаємо сюди + чекбокс у формі + поле в SuggestOptions.
+const sugOptions = reactive({ askName: false, requireName: false })
+
+const sugWheelValid = computed(() =>
+  sugWheelId.value ? true : !!sugNewWheel.value.trim(),
+)
+
+async function loadSession() {
+  try {
+    const { data } = await http.get<SuggestSession | null>('/suggestions/active')
+    session.value = data ?? null
+  } catch (e) {
+    shareError.value = apiError(e)
+  }
+}
+
+async function startSession() {
+  if (!sugWheelValid.value) return
+  sessionBusy.value = true
+  shareError.value = ''
+  try {
+    const { data } = await http.post<SuggestSession>('/suggestions', {
+      ...(sugWheelId.value ? { wheelId: sugWheelId.value } : { wheelName: sugNewWheel.value.trim() }),
+      options: { ...sugOptions },
+    })
+    session.value = data
+    sugNewWheel.value = ''
+    // Нове колесо могло щойно з'явитися — освіжаємо список для селекта.
+    loadWheels()
+  } catch (e) {
+    shareError.value = apiError(e)
+  } finally {
+    sessionBusy.value = false
+  }
+}
+
+async function closeSession() {
+  if (
+    !confirm(
+      'Закрити пропонування? Гості більше не зможуть додавати фільми, а колесо з набраними лишиться.',
+    )
+  )
+    return
+  sessionBusy.value = true
+  shareError.value = ''
+  try {
+    await http.delete('/suggestions/active')
+    session.value = null
+    loadWheels()
+  } catch (e) {
+    shareError.value = apiError(e)
+  } finally {
+    sessionBusy.value = false
+  }
+}
+
+// Ім'я не питаємо — вимагати його нема як; тримаємо прапорці узгодженими.
+watch(
+  () => sugOptions.askName,
+  (on) => {
+    if (!on) sugOptions.requireName = false
+  },
+)
+
 watch([editorOpen, detail], ([open, m]) => {
   document.body.style.overflow = open || m ? 'hidden' : ''
 })
@@ -535,6 +610,7 @@ onMounted(() => {
   loadGenres()
   loadWheels()
   loadShare()
+  loadSession()
   window.addEventListener('keydown', onKeydown)
 })
 
@@ -562,8 +638,12 @@ onUnmounted(() => {
             {{ importing ? 'Імпорт…' : '↥ Імпорт з JSON' }}
             <input type="file" accept="application/json,.json" @change="onImport" :disabled="importing" hidden />
           </label>
-          <button class="btn btn-ghost btn-sm" :class="{ shared: shareToken }" @click="openShare">
-            ↗ Поділитися{{ shareToken ? ' ✓' : '' }}
+          <button
+            class="btn btn-ghost btn-sm"
+            :class="{ shared: shareToken, collecting: !!session }"
+            @click="openShare"
+          >
+            ↗ Поділитися{{ session ? ' · збір' : shareToken ? ' ✓' : '' }}
           </button>
           <span class="count">
             {{ filtersActive ? `${filteredMovies.length} / ${movies.length}` : movies.length }} фільм(ів)
@@ -822,7 +902,7 @@ onUnmounted(() => {
     <!-- Модальне вікно публічного посилання на бібліотеку -->
     <Teleport to="body">
       <div v-if="shareOpen" class="overlay" @click.self="closeShare">
-        <div class="modal modal-sm">
+        <div class="modal modal-sm modal-share">
           <div class="wm-eyebrow">Публічне посилання</div>
           <p class="share-hint">
             Будь-хто з цим посиланням побачить твій список фільмів і зможе користуватися
@@ -852,6 +932,76 @@ onUnmounted(() => {
           <p v-if="shareToken" class="share-warn">
             «Створити нове» і «Відкликати» одразу ламають старе посилання.
           </p>
+
+          <!-- Пропонування фільмів гостями — поверх того самого посилання -->
+          <div class="sug-block">
+            <div class="wm-eyebrow">Пропонування фільмів</div>
+
+            <template v-if="session">
+              <p class="share-hint">
+                Гості за посиланням пропонують фільми — вони одразу падають у колесо
+                <strong class="sug-wheel">«{{ session.wheelName }}»</strong>.
+                Уже запропоновано: {{ session.count }}.
+              </p>
+              <div class="wm-actions">
+                <router-link
+                  class="btn btn-ghost"
+                  :to="{ name: 'wheel', params: { id: session.wheelId } }"
+                >Відкрити колесо</router-link>
+                <button class="btn btn-primary" :disabled="sessionBusy" @click="closeSession">
+                  {{ sessionBusy ? '…' : 'Закрити пропонування' }}
+                </button>
+              </div>
+              <p class="share-warn">
+                Після закриття кнопки в гостей зникнуть, а колесо з набраними фільмами лишиться.
+              </p>
+            </template>
+
+            <p v-else-if="!shareToken" class="muted">
+              Спочатку створи посилання — без нього гостям нікуди заходити.
+            </p>
+
+            <template v-else>
+              <p class="share-hint">
+                Увімкни, щоб друзі за цим посиланням могли пропонувати фільми у спільне колесо.
+              </p>
+
+              <select class="field" v-model="sugWheelId">
+                <option value="">➕ Нове колесо</option>
+                <option v-for="w in wheels" :key="w.id" :value="w.id">
+                  {{ w.name }} — {{ w._count.items }} фільм.
+                </option>
+              </select>
+              <input
+                v-if="!sugWheelId"
+                class="field"
+                v-model="sugNewWheel"
+                placeholder="Назва нового колеса"
+                @keydown.enter.prevent="startSession"
+              />
+
+              <label class="sug-opt">
+                <input type="checkbox" v-model="sugOptions.askName" />
+                <span>Питати ім’я гостя</span>
+              </label>
+              <label class="sug-opt" :class="{ off: !sugOptions.askName }">
+                <input
+                  type="checkbox"
+                  v-model="sugOptions.requireName"
+                  :disabled="!sugOptions.askName"
+                />
+                <span>Ім’я обов’язкове</span>
+              </label>
+
+              <div class="wm-actions">
+                <button
+                  class="btn btn-primary"
+                  :disabled="sessionBusy || !sugWheelValid"
+                  @click="startSession"
+                >{{ sessionBusy ? '…' : 'Запустити пропонування' }}</button>
+              </div>
+            </template>
+          </div>
         </div>
       </div>
     </Teleport>
@@ -1094,6 +1244,23 @@ onUnmounted(() => {
   text-shadow: 0 0 12px rgba(57, 255, 168, 0.45);
 }
 .share-warn { font-size: 11px; color: var(--ink-faint); line-height: 1.45; }
+.btn.collecting { border-color: var(--accent); color: var(--accent); }
+
+/* Блок пропонування у модалці посилання */
+.modal-share { overflow-y: auto; }
+.sug-block {
+  display: flex; flex-direction: column; gap: 12px;
+  margin-top: 4px; padding-top: 16px;
+  border-top: 1px solid var(--line-soft);
+}
+.sug-wheel { color: var(--accent-2); font-weight: 700; }
+.sug-opt {
+  display: flex; align-items: center; gap: 10px;
+  font-size: 13px; color: var(--ink-dim); cursor: pointer;
+}
+.sug-opt input { accent-color: var(--accent); width: 16px; height: 16px; cursor: pointer; }
+.sug-opt.off { opacity: 0.45; cursor: default; }
+.sug-block .wm-actions .btn { text-decoration: none; }
 
 .manage { text-decoration: none; display: inline-flex; align-items: center; white-space: nowrap; }
 .link-btn {

@@ -1,23 +1,32 @@
 <script setup lang="ts">
 // Публічна сторінка чужої бібліотеки: відкривається по посиланню /shared/:token
-// без логіну. Свідомо лише читання — список і фільтри. Ніяких дій над фільмами
-// тут немає, а бекенд по цьому маршруту нічого й не дозволить.
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+// без логіну. За замовчуванням лише читання — список і фільтри.
+// Якщо власник запустив сесію пропонування (suggest !== null), додається одна
+// дія: «Запропонувати» — фільм одразу падає в його колесо. Більше гість не
+// може нічого, і бекенд по цих маршрутах теж нічого іншого не дозволить.
+import { ref, computed, nextTick, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { http, apiError } from '../api/http'
-import type { PublicMovie } from '../types'
+import type { PublicMovie, PublicSuggest, SuggestedEntry } from '../types'
 
 const route = useRoute()
+
+const token = String(route.params.token)
 
 const movies = ref<PublicMovie[]>([])
 const loading = ref(true)
 const error = ref('')
+
+// Стан пропонування; null — сесії немає, сторінка лише для перегляду.
+const suggest = ref<PublicSuggest | null>(null)
 
 // Фільтри — ті самі, що й у власній бібліотеці: пошук за назвою, жанри
 // (усі обрані мають бути у фільмі), статус перегляду.
 const searchQuery = ref('')
 const filterGenres = ref<string[]>([])
 const watchedFilter = ref<'all' | 'watched' | 'unwatched'>('all')
+// Показується лише під час сесії пропонування.
+const suggestFilter = ref<'all' | 'suggested' | 'free'>('all')
 
 // Каталогу жанрів у гостя немає, тож збираємо їх із самих фільмів.
 const allGenres = computed(() => {
@@ -30,17 +39,25 @@ const filteredMovies = computed(() => {
   const q = searchQuery.value.trim().toLowerCase()
   const gs = filterGenres.value
   const wf = watchedFilter.value
+  // Поза сесією фільтр пропозицій не діє, навіть якщо в ньому лишилось значення.
+  const sf = suggest.value ? suggestFilter.value : 'all'
   return movies.value.filter((m) => {
     if (q && !m.title.toLowerCase().includes(q)) return false
     if (gs.length && !gs.every((g) => m.genres.includes(g))) return false
     if (wf === 'watched' && !m.watched) return false
     if (wf === 'unwatched' && m.watched) return false
+    if (sf === 'suggested' && !suggestedBy.value.has(m.id)) return false
+    if (sf === 'free' && suggestedBy.value.has(m.id)) return false
     return true
   })
 })
 
 const filtersActive = computed(
-  () => !!searchQuery.value.trim() || filterGenres.value.length > 0 || watchedFilter.value !== 'all',
+  () =>
+    !!searchQuery.value.trim() ||
+    filterGenres.value.length > 0 ||
+    watchedFilter.value !== 'all' ||
+    (!!suggest.value && suggestFilter.value !== 'all'),
 )
 
 function toggleFilterGenre(name: string) {
@@ -52,6 +69,7 @@ function clearFilters() {
   searchQuery.value = ''
   filterGenres.value = []
   watchedFilter.value = 'all'
+  suggestFilter.value = 'all'
 }
 
 // Неоновий колір картки — стабільний за id, як і в «Моїх фільмах».
@@ -70,6 +88,120 @@ function fmtDate(iso: string | null): string {
   })
 }
 
+// ── Пропонування фільмів ────────────────────────────────────────────────────
+// Гість натискає «Запропонувати» — бекенд створює запис пропозиції й кладе
+// фільм у колесо власника. Скасувати пропозицію гість не може: прибрати фільм
+// з колеса вміє лише власник у себе на сторінці колеса.
+
+// movieId → ім'я того, хто запропонував (null, якщо імена не питали).
+const suggestedBy = computed(() => {
+  const map = new Map<string, string | null>()
+  suggest.value?.suggested.forEach((s) => map.set(s.movieId, s.guestName))
+  return map
+})
+
+const suggestingId = ref<string | null>(null)
+const suggestError = ref('')
+
+// Ім'я гостя лишається в браузері, щоб не питати його на кожен фільм.
+const GUEST_NAME_KEY = 'spin_guest_name'
+const guestName = ref(localStorage.getItem(GUEST_NAME_KEY) ?? '')
+
+// Фільм, що чекає на ввід імені (опція askName і ще не знаємо, хто це).
+const namePrompt = ref<PublicMovie | null>(null)
+const nameDraft = ref('')
+
+const nameRequired = computed(() => suggest.value?.options.requireName === true)
+
+function onSuggest(m: PublicMovie) {
+  if (!suggest.value || suggestedBy.value.has(m.id) || suggestingId.value) return
+  if (suggest.value.options.askName && !guestName.value.trim()) {
+    nameDraft.value = guestName.value
+    namePrompt.value = m
+    return
+  }
+  sendSuggest(m)
+}
+
+function confirmName() {
+  const m = namePrompt.value
+  if (!m) return
+  const name = nameDraft.value.trim()
+  if (nameRequired.value && !name) return
+  guestName.value = name
+  if (name) localStorage.setItem(GUEST_NAME_KEY, name)
+  namePrompt.value = null
+  sendSuggest(m)
+}
+
+function closeNamePrompt() {
+  namePrompt.value = null
+}
+
+const nameInput = ref<HTMLInputElement | null>(null)
+
+watch(namePrompt, async (m) => {
+  if (!m) return
+  await nextTick()
+  nameInput.value?.focus()
+})
+
+async function sendSuggest(m: PublicMovie) {
+  suggestingId.value = m.id
+  suggestError.value = ''
+  try {
+    const { data } = await http.post<SuggestedEntry>(
+      `/public/suggestions/${encodeURIComponent(token)}`,
+      { movieId: m.id, guestName: guestName.value.trim() || undefined },
+    )
+    // Той самий фільм міг паралельно запропонувати хтось інший — бекенд у цьому
+    // разі повертає наявний запис, тож просто не дублюємо його у списку.
+    if (suggest.value && !suggestedBy.value.has(data.movieId)) {
+      suggest.value.suggested.push(data)
+    }
+  } catch (e) {
+    suggestError.value = apiError(e)
+    // Найімовірніша причина — власник щойно закрив пропонування; підтягуємо
+    // свіжий стан, щоб кнопки зникли самі.
+    load()
+  } finally {
+    suggestingId.value = null
+  }
+}
+
+// Поки сесія триває, пропонують кілька людей одночасно — тихо освіжаємо
+// список, щоб чужі пропозиції зʼявлялись без перезавантаження сторінки.
+const REFRESH_MS = 15000
+let refreshTimer: number | undefined
+
+function scheduleRefresh() {
+  window.clearInterval(refreshTimer)
+  if (!suggest.value) return
+  refreshTimer = window.setInterval(() => {
+    if (document.visibilityState === 'visible' && !suggestingId.value) load()
+  }, REFRESH_MS)
+}
+
+async function load() {
+  try {
+    const { data } = await http.get<{ movies: PublicMovie[]; suggest: PublicSuggest | null }>(
+      `/public/movies/${encodeURIComponent(token)}`,
+    )
+    movies.value = data.movies
+    suggest.value = data.suggest
+    error.value = ''
+  } catch (e) {
+    error.value = apiError(e)
+  } finally {
+    loading.value = false
+  }
+}
+
+watch(suggest, (s, prev) => {
+  // Сесія зʼявилась або зникла — перезапускаємо/зупиняємо фонове оновлення.
+  if (!!s !== !!prev) scheduleRefresh()
+})
+
 // Картка відкриває модалку з повним описом — у сітці опис обрізаний трьома
 // рядками, і це єдиний спосіб прочитати його цілком у режимі перегляду.
 const detail = ref<PublicMovie | null>(null)
@@ -82,30 +214,25 @@ function closeDetail() {
 }
 
 function onKeydown(e: KeyboardEvent) {
-  if (e.key === 'Escape' && detail.value) closeDetail()
+  if (e.key !== 'Escape') return
+  if (namePrompt.value) closeNamePrompt()
+  else if (detail.value) closeDetail()
 }
 
-watch(detail, (m) => {
-  document.body.style.overflow = m ? 'hidden' : ''
+watch([detail, namePrompt], ([m, prompt]) => {
+  document.body.style.overflow = m || prompt ? 'hidden' : ''
 })
 
 onUnmounted(() => {
   window.removeEventListener('keydown', onKeydown)
+  window.clearInterval(refreshTimer)
   document.body.style.overflow = ''
 })
 
 onMounted(async () => {
   window.addEventListener('keydown', onKeydown)
-  try {
-    const { data } = await http.get<{ movies: PublicMovie[] }>(
-      `/public/movies/${encodeURIComponent(String(route.params.token))}`,
-    )
-    movies.value = data.movies
-  } catch (e) {
-    error.value = apiError(e)
-  } finally {
-    loading.value = false
-  }
+  await load()
+  scheduleRefresh()
 })
 </script>
 
@@ -129,7 +256,21 @@ onMounted(async () => {
         </span>
       </div>
 
+      <!-- Банер сесії пропонування. Немає сесії — сторінка виглядає як раніше. -->
+      <div v-if="suggest" class="sug-banner">
+        <div>
+          <div class="sug-title">Пропонування відкрите</div>
+          <p class="sug-text">
+            Обирай фільми зі списку — вони одразу потрапляють у колесо
+            <strong class="sug-wheel">«{{ suggest.wheelName }}»</strong>.
+            Уже запропоновано: {{ suggest.suggested.length }}.
+          </p>
+        </div>
+        <span v-if="guestName" class="sug-who">Ти: {{ guestName }}</span>
+      </div>
+
       <p v-if="error" class="err">{{ error }}</p>
+      <p v-if="suggestError" class="err">{{ suggestError }}</p>
 
       <div v-if="movies.length" class="filter-bar">
         <input
@@ -138,10 +279,24 @@ onMounted(async () => {
           type="search"
           placeholder="Пошук за назвою…"
         />
-        <div class="filter-watched">
-          <button type="button" class="seg" :class="{ on: watchedFilter === 'all' }" @click="watchedFilter = 'all'">Всі</button>
-          <button type="button" class="seg" :class="{ on: watchedFilter === 'watched' }" @click="watchedFilter = 'watched'">Переглянуто</button>
-          <button type="button" class="seg" :class="{ on: watchedFilter === 'unwatched' }" @click="watchedFilter = 'unwatched'">Не переглянуто</button>
+        <div class="filter-segs">
+          <div class="seg-group">
+            <span v-if="suggest" class="seg-label">Перегляд</span>
+            <div class="filter-watched">
+            <button type="button" class="seg" :class="{ on: watchedFilter === 'all' }" @click="watchedFilter = 'all'">Всі</button>
+            <button type="button" class="seg" :class="{ on: watchedFilter === 'watched' }" @click="watchedFilter = 'watched'">Переглянуто</button>
+            <button type="button" class="seg" :class="{ on: watchedFilter === 'unwatched' }" @click="watchedFilter = 'unwatched'">Не переглянуто</button>
+            </div>
+          </div>
+          <!-- Фільтр пропозицій живе лише під час сесії. -->
+          <div v-if="suggest" class="seg-group">
+            <span class="seg-label">Пропозиції</span>
+            <div class="filter-watched">
+              <button type="button" class="seg" :class="{ on: suggestFilter === 'all' }" @click="suggestFilter = 'all'">Усі</button>
+              <button type="button" class="seg" :class="{ on: suggestFilter === 'suggested' }" @click="suggestFilter = 'suggested'">Запропоновані</button>
+              <button type="button" class="seg" :class="{ on: suggestFilter === 'free' }" @click="suggestFilter = 'free'">Ще ні</button>
+            </div>
+          </div>
         </div>
         <div v-if="allGenres.length" class="filter-genres">
           <button
@@ -183,6 +338,7 @@ onMounted(async () => {
             <span v-if="m.watched" class="seen-badge" title="Переглянуто">
               <svg viewBox="0 0 24 24" width="14" height="14"><path fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" d="M20 6 9 17l-5-5"/></svg>
             </span>
+            <span v-if="suggestedBy.has(m.id)" class="sug-flag">Запропоновано</span>
           </div>
           <div class="card-body">
             <h3>{{ m.title }} <span v-if="m.year" class="year">{{ m.year }}</span></h3>
@@ -193,6 +349,20 @@ onMounted(async () => {
             <div class="seen-line" :class="{ on: m.watched }">
               <template v-if="m.watched">Переглянуто{{ m.watchedAt ? ` · ${fmtDate(m.watchedAt)}` : '' }}</template>
               <template v-else>Не переглянуто</template>
+            </div>
+
+            <!-- Єдина дія гостя. click.stop — щоб не відкривалась модалка опису. -->
+            <div v-if="suggest" class="card-actions" @click.stop>
+              <button
+                v-if="!suggestedBy.has(m.id)"
+                type="button"
+                class="btn btn-primary btn-sm sug-btn"
+                :disabled="suggestingId === m.id"
+                @click="onSuggest(m)"
+              >{{ suggestingId === m.id ? '…' : '+ Запропонувати' }}</button>
+              <span v-else class="sug-done">
+                ✓ Запропоновано{{ suggestedBy.get(m.id) ? ` · ${suggestedBy.get(m.id)}` : '' }}
+              </span>
             </div>
           </div>
         </article>
@@ -241,7 +411,51 @@ onMounted(async () => {
           </div>
 
           <div class="modal-foot">
+            <template v-if="suggest">
+              <button
+                v-if="!suggestedBy.has(detail.id)"
+                class="btn btn-primary"
+                :disabled="suggestingId === detail.id"
+                @click="onSuggest(detail)"
+              >{{ suggestingId === detail.id ? '…' : '+ Запропонувати' }}</button>
+              <span v-else class="sug-done foot">
+                ✓ Запропоновано{{ suggestedBy.get(detail.id) ? ` · ${suggestedBy.get(detail.id)}` : '' }}
+              </span>
+            </template>
             <button class="btn btn-ghost" @click="closeDetail">Закрити</button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- Ім'я гостя: питаємо один раз за сесію опції askName, далі памʼятаємо. -->
+    <Teleport to="body">
+      <div v-if="namePrompt" class="overlay" @click.self="closeNamePrompt">
+        <div class="modal modal-sm">
+          <div class="wm-eyebrow">Як тебе підписати?</div>
+          <p class="sug-text">
+            Ім’я побачать усі, хто відкриє це посилання. Питаємо один раз.
+          </p>
+          <input
+            ref="nameInput"
+            class="field"
+            v-model="nameDraft"
+            :placeholder="nameRequired ? 'Ім’я (обов’язково)' : 'Ім’я'"
+            maxlength="40"
+            @keydown.enter.prevent="confirmName"
+          />
+          <div class="wm-actions">
+            <button
+              class="btn btn-primary"
+              :disabled="nameRequired && !nameDraft.trim()"
+              @click="confirmName"
+            >Запропонувати «{{ namePrompt.title }}»</button>
+            <button
+              v-if="!nameRequired"
+              class="btn btn-ghost"
+              @click="nameDraft = ''; confirmName()"
+            >Без імені</button>
+            <button class="btn btn-ghost" @click="closeNamePrompt">Скасувати</button>
           </div>
         </div>
       </div>
@@ -397,6 +611,55 @@ onMounted(async () => {
 .seen-line.on { color: var(--accent-4); text-shadow: 0 0 12px rgba(57, 255, 168, 0.4); }
 
 .err { color: var(--danger); font-size: 14px; }
+
+/* ── Пропонування ── */
+.sug-banner {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap;
+  padding: 16px 20px; border-radius: 14px;
+  border: 1.5px solid var(--accent);
+  background: linear-gradient(100deg, rgba(255, 45, 149, 0.14) 0%, rgba(192, 38, 211, 0.1) 100%);
+  box-shadow: 0 0 24px -8px var(--accent);
+}
+.sug-title {
+  font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.18em;
+  color: var(--accent); margin-bottom: 6px;
+}
+.sug-text { font-size: 14px; color: var(--ink-dim); line-height: 1.5; }
+.sug-wheel { color: var(--accent-2); font-weight: 700; }
+.sug-who {
+  font-size: 12px; letter-spacing: 0.08em; color: var(--ink-faint);
+  border: 1px solid var(--line-soft); border-radius: 999px; padding: 6px 14px; white-space: nowrap;
+}
+
+.filter-segs { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px 20px; }
+.seg-group { display: flex; flex-direction: column; gap: 6px; }
+.seg-label {
+  font-size: 10px; font-weight: 700; letter-spacing: 0.16em; text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+/* Позначка на постері: видно, що фільм уже в колесі */
+.sug-flag {
+  position: absolute; top: 8px; right: 8px;
+  background: rgba(10, 5, 24, 0.85); border: 1px solid var(--accent); color: var(--accent);
+  font-size: 10px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase;
+  padding: 3px 8px; border-radius: 999px; backdrop-filter: blur(4px);
+}
+
+.card-actions { margin-top: 4px; }
+.sug-btn { width: 100%; justify-content: center; }
+.sug-done {
+  display: block; font-size: 11px; font-weight: 700; letter-spacing: 0.08em;
+  text-transform: uppercase; color: var(--accent);
+  text-shadow: 0 0 12px rgba(255, 45, 149, 0.4);
+}
+.sug-done.foot { align-self: center; text-transform: none; letter-spacing: 0.04em; font-size: 13px; }
+
+/* Модалка з іменем гостя */
+.modal-sm { width: min(400px, 92vw); padding: 26px; gap: 14px; }
+.wm-eyebrow { font-size: 11px; text-transform: uppercase; letter-spacing: 0.18em; color: var(--accent-2); }
+.wm-actions { display: flex; flex-direction: column; gap: 10px; margin-top: 4px; }
+.wm-actions .btn { width: 100%; justify-content: center; text-align: center; white-space: normal; }
 
 /* Модалка з повним описом */
 .overlay {

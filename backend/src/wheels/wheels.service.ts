@@ -127,6 +127,12 @@ export class WheelsService {
       where: { id: itemId },
       include: { movie: true },
     });
+    // Позиція пішла з колеса — знімаємо й позначку «запропоновано» у відкритій
+    // сесії цього колеса. Інакше на сторінці гостя фільм лишався б позначеним
+    // і його не можна було б запропонувати вдруге.
+    await this.prisma.suggestion.deleteMany({
+      where: { movieId: item.movieId, session: { wheelId, closedAt: null } },
+    });
     // Своє слово без інших колес і без згадок в історії — прибираємо з БД,
     // щоб приховані записи не накопичувались.
     if (item.movie.isCustom) {

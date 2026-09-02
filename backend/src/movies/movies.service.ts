@@ -174,6 +174,8 @@ export class MoviesService {
       orderBy: { createdAt: 'desc' },
       select: PUBLIC_MOVIE_SELECT,
     });
-    return { movies };
+    // ownerId потрібен контролеру, щоб домішати стан пропонування; назовні
+    // він не йде — у відповідь контролер кладе лише movies + suggest.
+    return { ownerId: owner.id, movies };
   }
 }
